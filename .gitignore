@@ -7,3 +7,9 @@ frontend/*.tsbuildinfo
 .DS_Store
 *.log
 postgres_data/
+
+# Legacy scraper artifacts — not part of the app build
+*.sqlite3
+legacy_python_scraper/debug_snapshots/
+.pycache/
+.pytest_cache/
