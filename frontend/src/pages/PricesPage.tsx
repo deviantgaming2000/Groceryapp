@@ -1,5 +1,7 @@
 import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import { confidenceLevels, Input, Select, Textarea, units } from "../components/FormFields";
+import { SidePanel } from "../components/SidePanel";
+import { PriceHistoryChart } from "../components/PriceHistoryChart";
 import { api, dateOnly, money } from "../lib/api";
 
 type UnitType = typeof units[number];
@@ -50,6 +52,7 @@ export function PricesPage() {
   const [storeFilter, setStoreFilter] = useState("all");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [historyGroup, setHistoryGroup] = useState<{ item: any; prices: any[] } | null>(null);
   const load = () => Promise.all([api<any[]>("/api/items"), api<any[]>("/api/stores"), api<any[]>("/api/prices")]).then(([i, s, p]) => {
     setItems(i);
     setStores(s);
@@ -270,7 +273,12 @@ export function PricesPage() {
       <table><thead><tr><th>Store</th><th>Price</th><th>Package</th><th>Equivalent unit price</th><th>Brand</th><th>Recorded</th><th>Expires</th><th>Confidence</th><th>Actions</th></tr></thead><tbody>
         {groupedPrices.map((group) => (
           <Fragment key={group.item?.id ?? "unknown-item"}>
-            <tr key={`${group.item?.id}-group`} className="group-row"><td colSpan={9}>{group.item?.name ?? "Unknown item"}<small>{group.item?.category ?? "Uncategorized"} · comparing as {group.item?.unitType ?? "entered"} · {group.prices.length} saved {group.prices.length === 1 ? "price" : "prices"}</small></td></tr>
+            <tr key={`${group.item?.id}-group`} className="group-row"><td colSpan={9}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div>{group.item?.name ?? "Unknown item"}<small>{group.item?.category ?? "Uncategorized"} · comparing as {group.item?.unitType ?? "entered"} · {group.prices.length} saved {group.prices.length === 1 ? "price" : "prices"}</small></div>
+                <button type="button" className="secondary" style={{ padding: "5px 11px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => setHistoryGroup(group)}>📈 History</button>
+              </div>
+            </td></tr>
             {group.prices.map((price) => editingPriceId === price.id ? (
               <tr key={price.id}>
                 <td colSpan={9}>
@@ -321,6 +329,19 @@ export function PricesPage() {
           </Fragment>
         ))}
       </tbody></table>
+
+      <SidePanel
+        open={!!historyGroup}
+        title={<>Price history · {historyGroup?.item?.name ?? ""}</>}
+        onClose={() => setHistoryGroup(null)}
+      >
+        {historyGroup && (
+          <PriceHistoryChart
+            unit={historyGroup.item?.unitType}
+            points={historyGroup.prices.map((p) => ({ date: p.recordedAt, price: Number(p.price), store: p.store?.name }))}
+          />
+        )}
+      </SidePanel>
     </section>
   );
 }

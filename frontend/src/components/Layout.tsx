@@ -1,6 +1,7 @@
-import { BarChart3, ClipboardList, Gauge, Home, Percent, Search, Settings, ShoppingBasket, Store, Tags } from "lucide-react";
+import { BarChart3, ClipboardList, Home, Percent, Search, Settings, ShoppingBasket, Store, Tags } from "lucide-react";
 import { ReactNode } from "react";
 import { SystemStatus } from "./SystemStatus";
+import { PageTransition } from "./PageTransition";
 
 const nav = [
   ["Dashboard", "dashboard", Home],
@@ -19,8 +20,7 @@ export function Layout({ page, setPage, children }: { page: string; setPage: (pa
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <Gauge size={22} />
-          <span>Grocery Math</span>
+          <img src="/logo.png" alt="Grocery Math" className="brand-logo" />
         </div>
         <nav>
           {nav.map(([label, id, Icon]) => (
@@ -33,7 +33,7 @@ export function Layout({ page, setPage, children }: { page: string; setPage: (pa
       </aside>
       <main className="content">
         <SystemStatus />
-        {children}
+        <PageTransition pageKey={page}>{children}</PageTransition>
       </main>
     </div>
   );
