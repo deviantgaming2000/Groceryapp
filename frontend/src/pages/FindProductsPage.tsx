@@ -11,6 +11,7 @@ interface ProviderStatus {
   provider: string;
   label: string;
   hasStores: boolean;
+  hasDirectory: boolean;
   configured: boolean;
   selectedStore: { locationId: string; name: string | null } | null;
 }
@@ -45,8 +46,15 @@ export function FindProductsPage() {
 
   const [changingStore, setChangingStore] = useState(false);
   const [zip, setZip] = useState("");
+  const [directId, setDirectId] = useState("");
   const [locations, setLocations] = useState<PLocation[]>([]);
   const [searchingLocs, setSearchingLocs] = useState(false);
+
+  // Directory browse (providers with hasDirectory, e.g. Walmart)
+  const [states, setStates] = useState<{ state: string; count: number }[]>([]);
+  const [cities, setCities] = useState<{ city: string; count: number }[]>([]);
+  const [selState, setSelState] = useState("");
+  const [selCity, setSelCity] = useState("");
 
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<PProduct[]>([]);
@@ -67,10 +75,55 @@ export function FindProductsPage() {
     setSearched(false);
     setLocations([]);
     setChangingStore(false);
+    setStates([]);
+    setCities([]);
+    setSelState("");
+    setSelCity("");
     setMessage("");
     setError("");
     void loadStatus(provider);
   }, [provider]);
+
+  // Load the state list when opening the store picker for a directory provider.
+  async function openStorePicker() {
+    setChangingStore((v) => !v);
+    if (!changingStore && status?.hasDirectory && states.length === 0) {
+      try {
+        setStates(await api<{ state: string; count: number }[]>(`/api/${provider}/states`));
+      } catch {
+        /* leave empty */
+      }
+    }
+  }
+
+  async function pickState(state: string) {
+    setSelState(state);
+    setSelCity("");
+    setLocations([]);
+    setCities([]);
+    if (!state) return;
+    try {
+      setCities(await api<{ city: string; count: number }[]>(`/api/${provider}/cities?state=${encodeURIComponent(state)}`));
+    } catch {
+      setCities([]);
+    }
+  }
+
+  async function pickCity(city: string) {
+    setSelCity(city);
+    setLocations([]);
+    if (!city) return;
+    setSearchingLocs(true);
+    try {
+      setLocations(
+        await api<PLocation[]>(`/api/${provider}/locations?state=${encodeURIComponent(selState)}&city=${encodeURIComponent(city)}`)
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load stores");
+    } finally {
+      setSearchingLocs(false);
+    }
+  }
 
   // Suggest a ZIP from saved home settings.
   useEffect(() => {
@@ -98,6 +151,9 @@ export function FindProductsPage() {
       setMessage("Store saved.");
       setChangingStore(false);
       setLocations([]);
+      setSelState("");
+      setSelCity("");
+      setCities([]);
       await loadStatus(provider);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save store");
@@ -175,20 +231,48 @@ export function FindProductsPage() {
                   : "No store selected yet — pick one to get local prices."}
               </p>
             </div>
-            <button className="secondary" type="button" onClick={() => setChangingStore((v) => !v)} disabled={!status.configured}>
+            <button className="secondary" type="button" onClick={openStorePicker} disabled={!status.configured}>
               {changingStore ? "Cancel" : status.selectedStore ? "Change store" : "Choose store"}
             </button>
           </div>
 
           {changingStore && (
             <div style={{ marginTop: 14 }}>
-              <form className="toolbar" onSubmit={searchLocations}>
+              {status.hasDirectory ? (
+                /* Directory browse: state → city (Walmart) */
+                <div className="toolbar">
+                  <label className="field" style={{ flex: 1, minWidth: 140 }}>
+                    <span>State</span>
+                    <select value={selState} onChange={(e) => pickState(e.target.value)}>
+                      <option value="">Select state…</option>
+                      {states.map((s) => <option key={s.state} value={s.state}>{s.state} ({s.count})</option>)}
+                    </select>
+                  </label>
+                  <label className="field" style={{ flex: 1, minWidth: 160 }}>
+                    <span>City</span>
+                    <select value={selCity} onChange={(e) => pickCity(e.target.value)} disabled={!selState}>
+                      <option value="">{selState ? "Select city…" : "Pick a state first"}</option>
+                      {cities.map((c) => <option key={c.city} value={c.city}>{c.city} ({c.count})</option>)}
+                    </select>
+                  </label>
+                </div>
+              ) : (
+                /* Live ZIP search (Kroger) */
+                <form className="toolbar" onSubmit={searchLocations}>
+                  <label className="field" style={{ flex: 1, minWidth: 160 }}>
+                    <span>Search by ZIP code</span>
+                    <input value={zip} onChange={(e) => setZip(e.target.value)} placeholder="e.g. 85281" />
+                  </label>
+                  <button disabled={searchingLocs || !zip}>{searchingLocs ? "Searching…" : "Search stores"}</button>
+                </form>
+              )}
+              <div className="toolbar" style={{ marginTop: 10 }}>
                 <label className="field" style={{ flex: 1, minWidth: 160 }}>
-                  <span>ZIP code</span>
-                  <input value={zip} onChange={(e) => setZip(e.target.value)} placeholder="e.g. 85281" />
+                  <span>Or enter a store ID directly</span>
+                  <input value={directId} onChange={(e) => setDirectId(e.target.value)} placeholder={provider === "walmart" ? "e.g. 2280 (from the store's walmart.com URL)" : "store ID"} />
                 </label>
-                <button disabled={searchingLocs || !zip}>{searchingLocs ? "Searching…" : "Search stores"}</button>
-              </form>
+                <button type="button" className="secondary" disabled={!directId.trim()} onClick={() => selectStore(directId.trim())}>Use this ID</button>
+              </div>
               {locations.length > 0 && (
                 <div className="dashboard-grid" style={{ marginTop: 12 }}>
                   {locations.map((loc) => (

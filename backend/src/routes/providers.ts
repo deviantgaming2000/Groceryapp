@@ -50,9 +50,18 @@ async function ensureLocalStore(userId: string, providerId: string, loc: Normali
   });
 }
 
-async function getSavedKrogerLocationId(userId: string): Promise<string | null> {
+// Maps a provider to the UserSettings columns that hold its selected store.
+function savedStoreColumns(providerId: string): { id: string; name: string } | null {
+  if (providerId === "kroger") return { id: "krogerLocationId", name: "krogerLocationName" };
+  if (providerId === "walmart") return { id: "walmartStoreId", name: "walmartStoreName" };
+  return null;
+}
+
+async function getSavedLocationId(userId: string, providerId: string): Promise<string | null> {
+  const cols = savedStoreColumns(providerId);
+  if (!cols) return null;
   const settings = await prisma.userSettings.findUnique({ where: { userId } });
-  return settings?.krogerLocationId ?? null;
+  return ((settings as Record<string, any> | null)?.[cols.id] as string | undefined) ?? null;
 }
 
 export async function providerRoutes(app: FastifyInstance) {
@@ -61,20 +70,38 @@ export async function providerRoutes(app: FastifyInstance) {
     const provider = resolveProvider(reply, (request.params as any).provider);
     if (!provider) return;
     const userId = await getDefaultUserId();
-    const settings = await prisma.userSettings.findUnique({ where: { userId } });
+    const settings = (await prisma.userSettings.findUnique({ where: { userId } })) as Record<string, any> | null;
+    const cols = savedStoreColumns(provider.id);
+    const selectedStore =
+      cols && settings?.[cols.id] ? { locationId: settings[cols.id] as string, name: settings[cols.name] as string | null } : null;
     return {
       provider: provider.id,
       label: provider.label,
       hasStores: provider.hasStores,
+      hasDirectory: provider.hasDirectory ?? false,
       configured: await provider.isConfigured(),
-      selectedStore:
-        provider.id === "kroger" && settings?.krogerLocationId
-          ? { locationId: settings.krogerLocationId, name: settings.krogerLocationName }
-          : null
+      selectedStore
     };
   });
 
-  // Search store locations (ZIP / lat-lon / chain term).
+  // Directory: list states that have stores (providers with a bundled directory).
+  app.get("/:provider/states", async (request, reply) => {
+    const provider = resolveProvider(reply, (request.params as any).provider);
+    if (!provider) return;
+    if (!provider.listStates) return [];
+    return guard(reply, () => provider.listStates!());
+  });
+
+  // Directory: list cities within a state.
+  app.get("/:provider/cities", async (request, reply) => {
+    const provider = resolveProvider(reply, (request.params as any).provider);
+    if (!provider) return;
+    const { state } = request.query as { state?: string };
+    if (!provider.listCities || !state) return [];
+    return guard(reply, () => provider.listCities!(state));
+  });
+
+  // Search store locations (ZIP / lat-lon / chain term / state+city directory browse).
   app.get("/:provider/locations", async (request, reply) => {
     const provider = resolveProvider(reply, (request.params as any).provider);
     if (!provider) return;
@@ -83,6 +110,9 @@ export async function providerRoutes(app: FastifyInstance) {
       provider.searchLocations({
         zip: q.zip,
         term: q.term,
+        state: q.state,
+        city: q.city,
+        q: q.q,
         lat: q.lat ? Number(q.lat) : undefined,
         lon: q.lon ? Number(q.lon) : undefined,
         radiusInMiles: q.radius ? Number(q.radius) : undefined,
@@ -102,12 +132,13 @@ export async function providerRoutes(app: FastifyInstance) {
     if (!loc) return reply.code(404).send({ error: "Store location not found.", code: "not_found" });
 
     const store = await ensureLocalStore(userId, provider.id, loc);
-    if (provider.id === "kroger") {
+    const cols = savedStoreColumns(provider.id);
+    if (cols) {
       await prisma.userSettings.update({
         where: { userId },
         data: {
-          krogerLocationId: loc.externalId,
-          krogerLocationName: [loc.name, loc.city].filter(Boolean).join(" — ")
+          [cols.id]: loc.externalId,
+          [cols.name]: [loc.name, loc.city].filter(Boolean).join(" — ")
         }
       });
     }
@@ -120,7 +151,7 @@ export async function providerRoutes(app: FastifyInstance) {
     if (!provider) return;
     const userId = await getDefaultUserId();
     const q = request.query as Record<string, string>;
-    const locationId = q.locationId || (provider.id === "kroger" ? await getSavedKrogerLocationId(userId) : null) || undefined;
+    const locationId = q.locationId || await getSavedLocationId(userId, provider.id) || undefined;
     return guard(reply, () =>
       provider.searchProducts({
         term: q.term ?? "",
@@ -139,7 +170,7 @@ export async function providerRoutes(app: FastifyInstance) {
     const userId = await getDefaultUserId();
     const { productId } = request.params as { productId: string };
     const q = request.query as Record<string, string>;
-    const locationId = q.locationId || (provider.id === "kroger" ? await getSavedKrogerLocationId(userId) : null) || undefined;
+    const locationId = q.locationId || await getSavedLocationId(userId, provider.id) || undefined;
     const product = await guard(reply, () => provider.getProduct(productId, locationId));
     if (product === undefined) return;
     if (!product) return reply.code(404).send({ error: "Product not found.", code: "not_found" });
@@ -157,7 +188,7 @@ export async function providerRoutes(app: FastifyInstance) {
 
     const locationId =
       body.locationId ||
-      (provider.id === "kroger" ? await getSavedKrogerLocationId(userId) : null) ||
+      await getSavedLocationId(userId, provider.id) ||
       provider.defaultLocationId?.();
     if (!locationId) {
       return reply.code(400).send({ error: "No store selected. Choose a store first.", code: "no_store" });

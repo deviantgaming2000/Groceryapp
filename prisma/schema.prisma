@@ -259,6 +259,8 @@ model UserSettings {
   googleMapsEnabled  Boolean  @default(false) @map("google_maps_enabled")
   krogerLocationId   String?  @map("kroger_location_id")
   krogerLocationName String?  @map("kroger_location_name")
+  walmartStoreId     String?  @map("walmart_store_id")
+  walmartStoreName   String?  @map("walmart_store_name")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

@@ -252,8 +252,22 @@ Walmart.com pricing (not per-store), so Walmart is modeled as a single online st
 2. Add it under **Settings → API Keys** (or set `SERPAPI_KEY` in `.env`).
 3. In **Find Products**, switch to the **Walmart** tab and search.
 
+### Store selection (store-specific pricing)
+
+SerpApi's Walmart engine accepts a `store_id` to return pricing for a specific store. In the
+Walmart **Store** panel you can:
+
+- **Enter a store ID directly** (recommended) — find it in a store's URL on walmart.com
+  (e.g. `walmart.com/store/2280-...` → `2280`). This is reliable and gives store-specific pricing.
+- **Search by ZIP** — best-effort via Walmart's public store finder. Walmart often blocks
+  server-side requests, so if it fails, use direct ID entry (the app says so).
+- **Walmart.com (national pricing)** — the default when no store is selected.
+
+The selected store is saved and passed as `store_id` on every search/import/refresh.
+
 Walmart uses the same provider/normalization layer and the same `/api/walmart/*` routes
-(`status`, `products/search`, `products/:id`, `import`, `prices/:id/refresh`) as Kroger.
+(`status`, `locations`, `store`, `products/search`, `products/:id`, `import`, `prices/:id/refresh`)
+as Kroger.
 
 ## Managing API Keys
 

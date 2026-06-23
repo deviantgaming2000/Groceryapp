@@ -52,6 +52,9 @@ export interface LocationSearchParams {
   lat?: number;
   lon?: number;
   term?: string;
+  state?: string;
+  city?: string;
+  q?: string;
   radiusInMiles?: number;
   limit?: number;
 }
@@ -70,9 +73,14 @@ export interface GroceryProvider {
   readonly label: string; // "Kroger / Fry's"
   /** Whether this provider supports per-store selection (Kroger) vs. online-only pricing (Walmart). */
   readonly hasStores: boolean;
+  /** Whether stores can be browsed via a bundled state → city directory (Walmart). */
+  readonly hasDirectory?: boolean;
   isConfigured(): Promise<boolean>;
   /** For online-only providers, a synthetic store id used when importing. */
   defaultLocationId?(): string;
+  /** Directory browse helpers (only when hasDirectory is true). */
+  listStates?(): Promise<{ state: string; count: number }[]>;
+  listCities?(state: string): Promise<{ city: string; count: number }[]>;
   searchLocations(params: LocationSearchParams): Promise<NormalizedLocation[]>;
   getLocation(externalId: string): Promise<NormalizedLocation | null>;
   searchProducts(params: ProductSearchParams): Promise<NormalizedProduct[]>;
