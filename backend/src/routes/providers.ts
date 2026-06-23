@@ -3,6 +3,27 @@ import { z } from "zod";
 import { getDefaultUserId, prisma } from "../lib/prisma.js";
 import { getProvider, NormalizedLocation, NormalizedProduct, ProviderError } from "../services/providers/index.js";
 
+const UNIT_TYPES = ["each", "lb", "oz", "gallon", "quart", "pint", "fl_oz", "pack", "case", "count"] as const;
+type UnitType = (typeof UNIT_TYPES)[number];
+
+/** Best-effort parse of a provider size string ("1 gal", "12 oz") into quantity + unit. */
+function parseSize(size?: string): { quantity: number; unit: UnitType } {
+  if (!size) return { quantity: 1, unit: "each" };
+  const s = size.toLowerCase();
+  const num = parseFloat(s.replace(/[^0-9.]/g, " ").trim().split(/\s+/)[0]);
+  const quantity = Number.isFinite(num) && num > 0 ? num : 1;
+  let unit: UnitType = "each";
+  if (/fl\.?\s*oz|fluid/.test(s)) unit = "fl_oz";
+  else if (/\bgal|gallon/.test(s)) unit = "gallon";
+  else if (/\bqt|quart/.test(s)) unit = "quart";
+  else if (/\bpt|pint/.test(s)) unit = "pint";
+  else if (/\boz|ounce/.test(s)) unit = "oz";
+  else if (/\blb|pound/.test(s)) unit = "lb";
+  else if (/\bpk|pack/.test(s)) unit = "pack";
+  else if (/\bct|count|ea\b|each/.test(s)) unit = "count";
+  return { quantity, unit };
+}
+
 function resolveProvider(reply: FastifyReply, providerId: string) {
   const provider = getProvider(providerId);
   if (!provider) {
@@ -183,7 +204,20 @@ export async function providerRoutes(app: FastifyInstance) {
     if (!provider) return;
     const userId = await getDefaultUserId();
     const body = z
-      .object({ productId: z.string().min(1), locationId: z.string().optional() })
+      .object({
+        productId: z.string().min(1),
+        locationId: z.string().optional(),
+        // Attach the price to an existing comparable item…
+        groceryItemId: z.string().optional(),
+        // …or create a new generic item to compare under.
+        newItem: z
+          .object({
+            name: z.string().min(1),
+            category: z.string().min(1),
+            unitType: z.enum(UNIT_TYPES).optional()
+          })
+          .optional()
+      })
       .parse(request.body);
 
     const locationId =
@@ -203,7 +237,27 @@ export async function providerRoutes(app: FastifyInstance) {
     if (product === undefined) return;
     if (!product) return reply.code(404).send({ error: "Product not found.", code: "not_found" });
 
-    const item = await upsertItem(userId, product);
+    // Resolve the comparable item: link to an existing one, create a generic one,
+    // or (legacy fallback) create one from the product itself.
+    let item;
+    if (body.groceryItemId) {
+      item = await prisma.groceryItem.findFirst({ where: { id: body.groceryItemId, userId } });
+      if (!item) return reply.code(404).send({ error: "Item not found.", code: "not_found" });
+    } else if (body.newItem) {
+      const sized = parseSize(product.size);
+      item = await prisma.groceryItem.create({
+        data: {
+          userId,
+          name: body.newItem.name,
+          category: body.newItem.category,
+          quantityNeeded: 1,
+          unitType: body.newItem.unitType ?? sized.unit
+        }
+      });
+    } else {
+      item = await upsertItem(userId, product);
+    }
+
     const price = await upsertPrice(userId, item.id, store.id, product);
     reply.code(201);
     return { item, price, store };
@@ -286,7 +340,18 @@ async function upsertPrice(
   if (existing) {
     return prisma.priceEntry.update({ where: { id: existing.id }, data });
   }
+  // On first import, derive package size from the product and keep the full
+  // product description in notes so it stays visible on the price entry.
+  const sized = parseSize(product.size);
   return prisma.priceEntry.create({
-    data: { userId, groceryItemId, storeId, packageQuantity: 1, packageUnit: "each", ...data }
+    data: {
+      userId,
+      groceryItemId,
+      storeId,
+      packageQuantity: sized.quantity,
+      packageUnit: sized.unit,
+      notes: [product.title, product.size].filter(Boolean).join(" · ") || null,
+      ...data
+    }
   });
 }

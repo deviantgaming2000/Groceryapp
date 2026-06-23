@@ -1,5 +1,40 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, money } from "../lib/api";
+import { units } from "../components/FormFields";
+
+interface AppItem { id: string; name: string; category: string; unitType: string }
+
+const STOP = new Set(["the", "and", "with", "for", "size", "each", "pack", "count", "value", "brand"]);
+function tokenize(s: string): string[] {
+  return (s || "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2 && !STOP.has(t));
+}
+/** Suggest the existing item whose name best overlaps the product title. */
+function suggestItem(title: string, items: AppItem[]): AppItem | null {
+  const titleTokens = new Set(tokenize(title));
+  let best: AppItem | null = null;
+  let bestScore = 0;
+  for (const it of items) {
+    const itTokens = tokenize(it.name);
+    if (!itTokens.length) continue;
+    const overlap = itTokens.filter((t) => titleTokens.has(t)).length;
+    const score = overlap / itTokens.length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = it;
+    }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+function guessUnit(size?: string): string {
+  const s = (size || "").toLowerCase();
+  if (/fl\.?\s*oz|fluid/.test(s)) return "fl_oz";
+  if (/\bgal|gallon/.test(s)) return "gallon";
+  if (/\bqt|quart/.test(s)) return "quart";
+  if (/\bpt|pint/.test(s)) return "pint";
+  if (/\boz|ounce/.test(s)) return "oz";
+  if (/\blb|pound/.test(s)) return "lb";
+  return "each";
+}
 
 const PROVIDERS = [
   { id: "kroger", label: "Kroger / Fry's" },
@@ -63,7 +98,18 @@ export function FindProductsPage() {
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [importingId, setImportingId] = useState("");
+
+  // Import chooser: which comparable item should this product attach to?
+  const [items, setItems] = useState<AppItem[]>([]);
+  const [pending, setPending] = useState<PProduct | null>(null);
+  const [targetItemId, setTargetItemId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  const [newUnit, setNewUnit] = useState("each");
+  const [confirming, setConfirming] = useState(false);
+
+  const loadItems = () => api<AppItem[]>("/api/items").then(setItems).catch(() => {});
+  useEffect(() => { void loadItems(); }, []);
 
   const loadStatus = (p: ProviderId) =>
     api<ProviderStatus>(`/api/${p}/status`).then(setStatus).catch(() => setStatus(null));
@@ -176,16 +222,44 @@ export function FindProductsPage() {
     }
   }
 
-  async function importProduct(productId: string) {
+  // Open the "compare as" chooser for a product, pre-selecting the best item match.
+  function openImport(p: PProduct) {
+    const match = suggestItem(p.title, items);
+    setPending(p);
+    setTargetItemId(match ? match.id : "__new__");
+    setNewName(p.title);
+    setNewCategory("");
+    setNewUnit(guessUnit(p.size));
     setError("");
-    setImportingId(productId);
+    setMessage("");
+  }
+
+  async function confirmImport() {
+    if (!pending) return;
+    const body: Record<string, unknown> = { productId: pending.externalProductId };
+    let label = "";
+    if (targetItemId === "__new__") {
+      if (!newName.trim() || !newCategory.trim()) {
+        setError("Enter an item name and category.");
+        return;
+      }
+      body.newItem = { name: newName.trim(), category: newCategory.trim(), unitType: newUnit };
+      label = newName.trim();
+    } else {
+      body.groceryItemId = targetItemId;
+      label = items.find((i) => i.id === targetItemId)?.name ?? "item";
+    }
+    setError("");
+    setConfirming(true);
     try {
-      await api(`/api/${provider}/import`, { method: "POST", body: JSON.stringify({ productId }) });
-      setMessage("Added to your items and prices.");
+      await api(`/api/${provider}/import`, { method: "POST", body: JSON.stringify(body) });
+      setMessage(`Added — comparing under "${label}".`);
+      setPending(null);
+      await loadItems();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not import product");
     } finally {
-      setImportingId("");
+      setConfirming(false);
     }
   }
 
@@ -340,12 +414,52 @@ export function FindProductsPage() {
                   {p.couponEligible && <span className="source-badge promo">Deal</span>}
                   {!p.available && <span className="source-badge stale">Out of stock</span>}
                 </div>
-                <button type="button" onClick={() => importProduct(p.externalProductId)} disabled={importingId === p.externalProductId}>
-                  {importingId === p.externalProductId ? "Adding…" : `Add from ${status?.label ?? "provider"}`}
+                <button type="button" onClick={() => openImport(p)}>
+                  {`Add from ${status?.label ?? "provider"}`}
                 </button>
               </div>
             </article>
           ))}
+        </div>
+      )}
+
+      {/* "Compare as" chooser — attach the product as a price under a comparable item */}
+      {pending && (
+        <div className="modal-backdrop" onClick={() => !confirming && setPending(null)}>
+          <div className="modal-card panel" onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginTop: 0 }}>Add to your list</h2>
+            <p style={{ margin: "0 0 4px" }}><strong style={{ color: "var(--ink)" }}>{pending.title}</strong></p>
+            <p style={{ margin: "0 0 14px", fontSize: 13 }}>
+              {[pending.brand, pending.size].filter(Boolean).join(" · ")} · {pending.price != null ? money(pending.promoPrice ?? pending.price) : "no price"}
+            </p>
+
+            <label className="field">
+              <span>Compare as</span>
+              <select value={targetItemId} onChange={(e) => setTargetItemId(e.target.value)}>
+                <option value="__new__">➕ Create new item…</option>
+                {items.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.category})</option>)}
+              </select>
+            </label>
+
+            {targetItemId === "__new__" ? (
+              <div className="inline-edit" style={{ marginTop: 12 }}>
+                <label className="field"><span>Item name</span><input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Whole Milk" /></label>
+                <label className="field"><span>Category</span><input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="e.g. Dairy" /></label>
+                <label className="field"><span>Compare by unit</span>
+                  <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)}>{units.map((u) => <option key={u} value={u}>{u}</option>)}</select>
+                </label>
+              </div>
+            ) : (
+              <p style={{ fontSize: 13, marginTop: 10 }}>
+                This {pending.brand || "product"} price will be added under <strong style={{ color: "var(--ink)" }}>{items.find((i) => i.id === targetItemId)?.name}</strong>, so it compares against other stores' prices for that item.
+              </p>
+            )}
+
+            <div className="action-row" style={{ marginTop: 16 }}>
+              <button type="button" onClick={confirmImport} disabled={confirming}>{confirming ? "Adding…" : "Add price"}</button>
+              <button type="button" className="secondary" onClick={() => setPending(null)} disabled={confirming}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
     </section>

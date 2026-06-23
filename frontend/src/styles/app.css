@@ -600,6 +600,28 @@ td small { color: var(--ink-soft); }
 .source-badge.promo { color: #07120d; background: var(--accent); border-color: transparent; }
 .source-badge.stale { color: var(--warn); border-color: rgba(255, 194, 102, 0.4); background: rgba(255, 194, 102, 0.1); }
 
+/* ---------- Modal (import chooser) ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(3, 4, 8, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: fadeUp 0.2s var(--ease) both;
+}
+.modal-card {
+  width: 100%;
+  max-width: 460px;
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.9);
+}
+
 /* ---------- Animations ---------- */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(10px); }

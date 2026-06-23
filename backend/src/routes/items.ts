@@ -55,6 +55,46 @@ export async function itemRoutes(app: FastifyInstance) {
     return prisma.groceryItem.update({ where: { id, userId }, data });
   });
 
+  // Merge one item into another: move its prices, list memberships, and coupons to the
+  // target item, then delete the now-empty source. Used to consolidate API-imported
+  // branded products (e.g. "Fry's Whole Milk") under a generic comparable item.
+  app.post("/items/:id/merge", async (request, reply) => {
+    const userId = await getDefaultUserId();
+    const { id } = request.params as { id: string };
+    const { targetItemId } = z.object({ targetItemId: z.string().min(1) }).parse(request.body);
+    if (id === targetItemId) return reply.code(400).send({ error: "Choose a different target item." });
+
+    const [source, target] = await Promise.all([
+      prisma.groceryItem.findFirst({ where: { id, userId } }),
+      prisma.groceryItem.findFirst({ where: { id: targetItemId, userId } })
+    ]);
+    if (!source || !target) return reply.code(404).send({ error: "Item not found." });
+
+    const movedPrices = await prisma.priceEntry.updateMany({
+      where: { userId, groceryItemId: id },
+      data: { groceryItemId: targetItemId }
+    });
+
+    // Reassign list memberships, respecting the unique (list, item) constraint.
+    const listItems = await prisma.groceryListItem.findMany({ where: { groceryItemId: id } });
+    let movedListItems = 0;
+    for (const li of listItems) {
+      const clash = await prisma.groceryListItem.findFirst({
+        where: { groceryListId: li.groceryListId, groceryItemId: targetItemId }
+      });
+      if (clash) await prisma.groceryListItem.delete({ where: { id: li.id } });
+      else {
+        await prisma.groceryListItem.update({ where: { id: li.id }, data: { groceryItemId: targetItemId } });
+        movedListItems++;
+      }
+    }
+
+    await prisma.coupon.updateMany({ where: { userId, groceryItemId: id }, data: { groceryItemId: targetItemId } });
+    await prisma.groceryItem.delete({ where: { id } });
+
+    return { merged: true, target, movedPrices: movedPrices.count, movedListItems };
+  });
+
   app.delete("/items/:id", async (request, reply) => {
     const userId = await getDefaultUserId();
     const { id } = request.params as { id: string };
