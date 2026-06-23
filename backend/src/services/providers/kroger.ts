@@ -1,3 +1,4 @@
+import { resolveConfig } from "../credentials.js";
 import {
   GroceryProvider,
   LocationSearchParams,
@@ -13,15 +14,13 @@ const OAUTH_SCOPE = process.env.KROGER_OAUTH_SCOPE ?? "product.compact";
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
-function credentials() {
-  return {
-    clientId: process.env.KROGER_CLIENT_ID ?? "",
-    clientSecret: process.env.KROGER_CLIENT_SECRET ?? ""
-  };
+async function credentials() {
+  const config = await resolveConfig("kroger");
+  return { clientId: config.clientId ?? "", clientSecret: config.clientSecret ?? "" };
 }
 
 async function getAccessToken(): Promise<string> {
-  const { clientId, clientSecret } = credentials();
+  const { clientId, clientSecret } = await credentials();
   if (!clientId || !clientSecret) {
     throw new ProviderError("Kroger API credentials are not configured on the server.", "not_configured", 503);
   }
@@ -188,9 +187,10 @@ function normalizeLocation(loc: KrogerLocation): NormalizedLocation {
 export const krogerProvider: GroceryProvider = {
   id: "kroger",
   label: "Kroger / Fry's",
+  hasStores: true,
 
-  isConfigured() {
-    const { clientId, clientSecret } = credentials();
+  async isConfigured() {
+    const { clientId, clientSecret } = await credentials();
     return Boolean(clientId && clientSecret);
   },
 

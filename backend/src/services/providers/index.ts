@@ -1,9 +1,11 @@
 import { GroceryProvider } from "./types.js";
 import { krogerProvider } from "./kroger.js";
+import { walmartProvider } from "./walmart.js";
 
-// Provider registry. Add Walmart/Safeway here once their providers are implemented.
+// Provider registry. Add Safeway here once its provider is implemented.
 export const providers: Record<string, GroceryProvider> = {
-  kroger: krogerProvider
+  kroger: krogerProvider,
+  walmart: walmartProvider
 };
 
 export function getProvider(id: string): GroceryProvider | undefined {

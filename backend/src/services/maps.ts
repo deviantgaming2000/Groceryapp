@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
+import { resolveConfig } from "./credentials.js";
 
 export function originHash(origin: string) {
   return crypto.createHash("sha256").update(origin.trim().toLowerCase()).digest("hex");
 }
 
 export async function fetchGoogleDistanceMiles(origin: string, destination: string) {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const key = (await resolveConfig("google_maps")).apiKey;
   if (!key) return null;
   const url = new URL("https://maps.googleapis.com/maps/api/distancematrix/json");
   url.searchParams.set("origins", origin);

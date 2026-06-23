@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Input } from "../components/FormFields";
+import { ApiKeysPanel } from "../components/ApiKeysPanel";
 import { api } from "../lib/api";
 
 export function SettingsPage() {
@@ -62,6 +63,8 @@ export function SettingsPage() {
   return (
     <section>
       <h1>Settings</h1>
+      <h2>API Keys &amp; Integrations</h2>
+      <ApiKeysPanel />
       <form className="grid-form" onSubmit={save}>
         <Input label="Home address" name="homeAddress" defaultValue={settings.homeAddress || ""} />
         <Input label="City" name="homeCity" defaultValue={settings.homeCity || ""} />

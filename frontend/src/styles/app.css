@@ -585,7 +585,18 @@ td small { color: var(--ink-soft); }
   white-space: nowrap;
 }
 .source-badge.kroger { color: #9bc2ff; border-color: rgba(60, 130, 246, 0.4); background: rgba(60, 130, 246, 0.12); }
+.source-badge.walmart { color: #ffd874; border-color: rgba(255, 194, 102, 0.45); background: rgba(255, 194, 102, 0.12); }
 .source-badge.manual { color: var(--ink-soft); }
+
+/* ---------- Provider tabs (Find Products) ---------- */
+.provider-tabs { display: flex; gap: 8px; margin: 14px 0 2px; flex-wrap: wrap; }
+.provider-tab { padding: 9px 18px; }
+.provider-tab.active {
+  background: linear-gradient(135deg, rgba(139, 92, 255, 0.22), rgba(41, 216, 255, 0.10));
+  border: 1px solid rgba(139, 92, 255, 0.4);
+  color: #fff;
+  box-shadow: 0 10px 24px -16px var(--brand-glow);
+}
 .source-badge.promo { color: #07120d; background: var(--accent); border-color: transparent; }
 .source-badge.stale { color: var(--warn); border-color: rgba(255, 194, 102, 0.4); background: rgba(255, 194, 102, 0.1); }
 

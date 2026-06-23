@@ -196,11 +196,11 @@ export function PricesPage() {
     }
   }
 
-  async function refreshPrice(priceId: string) {
+  async function refreshPrice(priceId: string, source: string) {
     setError("");
     try {
-      await api(`/api/kroger/prices/${priceId}/refresh`, { method: "POST" });
-      setMessage("Price refreshed from Kroger.");
+      await api(`/api/${source}/prices/${priceId}/refresh`, { method: "POST" });
+      setMessage("Price refreshed.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not refresh price");
@@ -299,8 +299,10 @@ export function PricesPage() {
               <tr key={price.id}>
                 <td>
                   {price.store?.name}
-                  {price.source === "kroger" && <span className="source-badge kroger" style={{ marginLeft: 6 }}>Kroger</span>}
-                  {price.couponEligible && <span className="source-badge promo" style={{ marginLeft: 6 }}>Promo</span>}
+                  {price.source && price.source !== "manual" && (
+                    <span className={`source-badge ${price.source}`} style={{ marginLeft: 6 }}>{price.source === "kroger" ? "Kroger" : price.source === "walmart" ? "Walmart" : price.source}</span>
+                  )}
+                  {price.couponEligible && <span className="source-badge promo" style={{ marginLeft: 6 }}>Deal</span>}
                 </td>
                 <td>{money(price.price)}</td>
                 <td>{price.packageQuantity} {price.packageUnit}</td>
@@ -310,7 +312,7 @@ export function PricesPage() {
                 <td>{dateOnly(price.expiresAt)}</td>
                 <td>{price.confidence}</td>
                 <td className="action-row">
-                  {price.source === "kroger" && <button className="secondary" type="button" onClick={() => refreshPrice(price.id)}>Refresh</button>}
+                  {price.source && price.source !== "manual" && <button className="secondary" type="button" onClick={() => refreshPrice(price.id, price.source)}>Refresh</button>}
                   <button type="button" onClick={() => setEditingPriceId(price.id)}>Edit</button>
                   <button className="danger" type="button" onClick={() => deletePrice(price.id)}>Remove</button>
                 </td>

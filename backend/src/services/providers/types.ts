@@ -68,7 +68,11 @@ export interface ProductSearchParams {
 export interface GroceryProvider {
   readonly id: string; // "kroger"
   readonly label: string; // "Kroger / Fry's"
-  isConfigured(): boolean;
+  /** Whether this provider supports per-store selection (Kroger) vs. online-only pricing (Walmart). */
+  readonly hasStores: boolean;
+  isConfigured(): Promise<boolean>;
+  /** For online-only providers, a synthetic store id used when importing. */
+  defaultLocationId?(): string;
   searchLocations(params: LocationSearchParams): Promise<NormalizedLocation[]>;
   getLocation(externalId: string): Promise<NormalizedLocation | null>;
   searchProducts(params: ProductSearchParams): Promise<NormalizedProduct[]>;

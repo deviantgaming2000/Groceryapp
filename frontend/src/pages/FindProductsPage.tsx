@@ -1,14 +1,21 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, money } from "../lib/api";
 
+const PROVIDERS = [
+  { id: "kroger", label: "Kroger / Fry's" },
+  { id: "walmart", label: "Walmart" }
+] as const;
+type ProviderId = (typeof PROVIDERS)[number]["id"];
+
 interface ProviderStatus {
   provider: string;
   label: string;
+  hasStores: boolean;
   configured: boolean;
   selectedStore: { locationId: string; name: string | null } | null;
 }
 
-interface KLocation {
+interface PLocation {
   externalId: string;
   name: string;
   chain?: string;
@@ -18,13 +25,12 @@ interface KLocation {
   zip?: string;
 }
 
-interface KProduct {
+interface PProduct {
   externalProductId: string;
   title: string;
   brand?: string;
   size?: string;
   imageUrl?: string;
-  productUrl?: string;
   price: number | null;
   regularPrice: number | null;
   promoPrice: number | null;
@@ -33,15 +39,17 @@ interface KProduct {
   couponEligible: boolean;
 }
 
-export function KrogerPage() {
+export function FindProductsPage() {
+  const [provider, setProvider] = useState<ProviderId>("kroger");
   const [status, setStatus] = useState<ProviderStatus | null>(null);
+
   const [changingStore, setChangingStore] = useState(false);
   const [zip, setZip] = useState("");
-  const [locations, setLocations] = useState<KLocation[]>([]);
+  const [locations, setLocations] = useState<PLocation[]>([]);
   const [searchingLocs, setSearchingLocs] = useState(false);
 
   const [term, setTerm] = useState("");
-  const [results, setResults] = useState<KProduct[]>([]);
+  const [results, setResults] = useState<PProduct[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
 
@@ -49,10 +57,22 @@ export function KrogerPage() {
   const [error, setError] = useState("");
   const [importingId, setImportingId] = useState("");
 
-  const loadStatus = () => api<ProviderStatus>("/api/kroger/status").then(setStatus).catch(() => setStatus(null));
-  useEffect(() => { void loadStatus(); }, []);
+  const loadStatus = (p: ProviderId) =>
+    api<ProviderStatus>(`/api/${p}/status`).then(setStatus).catch(() => setStatus(null));
 
-  // Prefill the ZIP from saved home settings to suggest a store.
+  // Reload status when the provider changes; reset transient UI.
+  useEffect(() => {
+    setStatus(null);
+    setResults([]);
+    setSearched(false);
+    setLocations([]);
+    setChangingStore(false);
+    setMessage("");
+    setError("");
+    void loadStatus(provider);
+  }, [provider]);
+
+  // Suggest a ZIP from saved home settings.
   useEffect(() => {
     api<any>("/api/settings").then((s) => { if (s?.homeZip) setZip((z) => z || s.homeZip); }).catch(() => {});
   }, []);
@@ -62,7 +82,7 @@ export function KrogerPage() {
     setError("");
     setSearchingLocs(true);
     try {
-      setLocations(await api<KLocation[]>(`/api/kroger/locations?zip=${encodeURIComponent(zip)}`));
+      setLocations(await api<PLocation[]>(`/api/${provider}/locations?zip=${encodeURIComponent(zip)}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not search stores");
       setLocations([]);
@@ -74,11 +94,11 @@ export function KrogerPage() {
   async function selectStore(locationId: string) {
     setError("");
     try {
-      await api("/api/kroger/store", { method: "POST", body: JSON.stringify({ locationId }) });
+      await api(`/api/${provider}/store`, { method: "POST", body: JSON.stringify({ locationId }) });
       setMessage("Store saved.");
       setChangingStore(false);
       setLocations([]);
-      await loadStatus();
+      await loadStatus(provider);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save store");
     }
@@ -91,7 +111,7 @@ export function KrogerPage() {
     setSearching(true);
     setSearched(true);
     try {
-      setResults(await api<KProduct[]>(`/api/kroger/products/search?term=${encodeURIComponent(term)}`));
+      setResults(await api<PProduct[]>(`/api/${provider}/products/search?term=${encodeURIComponent(term)}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not search products");
       setResults([]);
@@ -104,7 +124,7 @@ export function KrogerPage() {
     setError("");
     setImportingId(productId);
     try {
-      await api("/api/kroger/import", { method: "POST", body: JSON.stringify({ productId }) });
+      await api(`/api/${provider}/import`, { method: "POST", body: JSON.stringify({ productId }) });
       setMessage("Added to your items and prices.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not import product");
@@ -118,61 +138,74 @@ export function KrogerPage() {
       <div className="page-head">
         <div>
           <h1>Find Products</h1>
-          <p>Search Kroger / Fry's live product data, or keep adding prices manually in Price Entry.</p>
+          <p>Search live grocery product data, or keep adding prices manually in Price Entry.</p>
         </div>
-        <span className="source-badge kroger">Kroger / Fry's</span>
+      </div>
+
+      {/* Provider switcher */}
+      <div className="provider-tabs">
+        {PROVIDERS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`provider-tab ${provider === p.id ? "active" : "secondary"}`}
+            onClick={() => setProvider(p.id)}
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
 
       {status && !status.configured && (
         <div className="system-alert" style={{ marginTop: 12 }}>
-          <strong>Kroger API not configured.</strong>
-          <span>Add your developer credentials to the backend to enable live search. Manual entry still works.</span>
-          <code>KROGER_CLIENT_ID=…</code>
-          <code>KROGER_CLIENT_SECRET=…</code>
+          <strong>{status.label} is not configured.</strong>
+          <span>Add API keys under <strong>Settings → API Keys</strong> to enable live search. Manual entry still works.</span>
         </div>
       )}
 
-      {/* Store selector */}
-      <div className="panel" style={{ marginTop: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Store</h2>
-            <p style={{ margin: "4px 0 0" }}>
-              {status?.selectedStore
-                ? <>Searching prices at <strong style={{ color: "var(--ink)" }}>{status.selectedStore.name || status.selectedStore.locationId}</strong></>
-                : "No store selected yet — pick one to get local prices."}
-            </p>
+      {/* Store selector (providers that support stores) */}
+      {status?.hasStores && (
+        <div className="panel" style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <h2 style={{ margin: 0 }}>Store</h2>
+              <p style={{ margin: "4px 0 0" }}>
+                {status.selectedStore
+                  ? <>Searching prices at <strong style={{ color: "var(--ink)" }}>{status.selectedStore.name || status.selectedStore.locationId}</strong></>
+                  : "No store selected yet — pick one to get local prices."}
+              </p>
+            </div>
+            <button className="secondary" type="button" onClick={() => setChangingStore((v) => !v)} disabled={!status.configured}>
+              {changingStore ? "Cancel" : status.selectedStore ? "Change store" : "Choose store"}
+            </button>
           </div>
-          <button className="secondary" type="button" onClick={() => setChangingStore((v) => !v)} disabled={!status?.configured}>
-            {changingStore ? "Cancel" : status?.selectedStore ? "Change store" : "Choose store"}
-          </button>
-        </div>
 
-        {changingStore && (
-          <div style={{ marginTop: 14 }}>
-            <form className="toolbar" onSubmit={searchLocations}>
-              <label className="field" style={{ flex: 1, minWidth: 160 }}>
-                <span>ZIP code</span>
-                <input value={zip} onChange={(e) => setZip(e.target.value)} placeholder="e.g. 85281" />
-              </label>
-              <button disabled={searchingLocs || !zip}>{searchingLocs ? "Searching…" : "Search stores"}</button>
-            </form>
-            {locations.length > 0 && (
-              <div className="dashboard-grid" style={{ marginTop: 12 }}>
-                {locations.map((loc) => (
-                  <article key={loc.externalId}>
-                    <strong>{loc.name}</strong>
-                    <p style={{ margin: "4px 0 10px", fontSize: 13 }}>
-                      {[loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(", ")}
-                    </p>
-                    <button type="button" onClick={() => selectStore(loc.externalId)}>Use this store</button>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+          {changingStore && (
+            <div style={{ marginTop: 14 }}>
+              <form className="toolbar" onSubmit={searchLocations}>
+                <label className="field" style={{ flex: 1, minWidth: 160 }}>
+                  <span>ZIP code</span>
+                  <input value={zip} onChange={(e) => setZip(e.target.value)} placeholder="e.g. 85281" />
+                </label>
+                <button disabled={searchingLocs || !zip}>{searchingLocs ? "Searching…" : "Search stores"}</button>
+              </form>
+              {locations.length > 0 && (
+                <div className="dashboard-grid" style={{ marginTop: 12 }}>
+                  {locations.map((loc) => (
+                    <article key={loc.externalId}>
+                      <strong>{loc.name}</strong>
+                      <p style={{ margin: "4px 0 10px", fontSize: 13 }}>
+                        {[loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(", ")}
+                      </p>
+                      <button type="button" onClick={() => selectStore(loc.externalId)}>Use this store</button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Product search */}
       <form className="toolbar" style={{ marginTop: 18 }} onSubmit={searchProducts}>
@@ -180,7 +213,7 @@ export function KrogerPage() {
           <span>Search products</span>
           <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="milk, eggs, bread…" />
         </label>
-        <button disabled={searching || !term || !status?.configured}>{searching ? "Searching…" : "Search Kroger"}</button>
+        <button disabled={searching || !term || !status?.configured}>{searching ? "Searching…" : `Search ${status?.label ?? ""}`}</button>
       </form>
 
       {error && <p className="error">{error}</p>}
@@ -193,7 +226,7 @@ export function KrogerPage() {
       )}
 
       {!searching && searched && results.length === 0 && !error && (
-        <div className="panel" style={{ marginTop: 14 }}><p style={{ margin: 0 }}>No products found. Try a different term{!status?.selectedStore ? " or select a store for local pricing" : ""}.</p></div>
+        <div className="panel" style={{ marginTop: 14 }}><p style={{ margin: 0 }}>No products found. Try a different term.</p></div>
       )}
 
       {!searching && results.length > 0 && (
@@ -216,15 +249,15 @@ export function KrogerPage() {
                       {p.unitPrice != null && <span className="kroger-unit">{money(p.unitPrice)}/unit</span>}
                     </>
                   ) : (
-                    <span style={{ color: "var(--ink-soft)" }}>No price{!status?.selectedStore ? " (select a store)" : ""}</span>
+                    <span style={{ color: "var(--ink-soft)" }}>No price{status?.hasStores && !status?.selectedStore ? " (select a store)" : ""}</span>
                   )}
                 </div>
                 <div className="kroger-badges">
-                  {p.couponEligible && <span className="source-badge promo">Promo</span>}
+                  {p.couponEligible && <span className="source-badge promo">Deal</span>}
                   {!p.available && <span className="source-badge stale">Out of stock</span>}
                 </div>
                 <button type="button" onClick={() => importProduct(p.externalProductId)} disabled={importingId === p.externalProductId}>
-                  {importingId === p.externalProductId ? "Adding…" : "Add from Kroger"}
+                  {importingId === p.externalProductId ? "Adding…" : `Add from ${status?.label ?? "provider"}`}
                 </button>
               </div>
             </article>

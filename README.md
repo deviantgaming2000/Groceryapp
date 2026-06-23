@@ -242,6 +242,31 @@ a **Promo** badge. The data model is built so a richer coupon source can be adde
 - `POST /api/kroger/import` — import a product into items + prices
 - `POST /api/kroger/prices/:id/refresh` — refresh a linked price entry
 
+## Walmart (via SerpApi)
+
+Walmart has no public product API, so Walmart search runs through
+[SerpApi's Walmart engine](https://serpapi.com/walmart-product-api). It returns national
+Walmart.com pricing (not per-store), so Walmart is modeled as a single online store.
+
+1. Get a key at [serpapi.com](https://serpapi.com/walmart-product-api).
+2. Add it under **Settings → API Keys** (or set `SERPAPI_KEY` in `.env`).
+3. In **Find Products**, switch to the **Walmart** tab and search.
+
+Walmart uses the same provider/normalization layer and the same `/api/walmart/*` routes
+(`status`, `products/search`, `products/:id`, `import`, `prices/:id/refresh`) as Kroger.
+
+## Managing API Keys
+
+All integration keys (Kroger, Walmart/SerpApi, Google Maps) can be entered and updated in the
+web app under **Settings → API Keys** — no `.env` editing or restart required.
+
+- Keys are stored in the database (`api_credentials`) and **take precedence over `.env`**.
+- The API never returns saved secrets — only a masked hint (e.g. `••••1234`) and a configured
+  flag. Secrets are sent to the backend only when you save them.
+- `.env` values still work as a fallback and are shown as "from .env" in the UI.
+
+Endpoints: `GET /api/credentials`, `PUT /api/credentials/:provider`, `DELETE /api/credentials/:provider`.
+
 ## CSV Import / Export
 
 Templates:

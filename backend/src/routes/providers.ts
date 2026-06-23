@@ -65,7 +65,8 @@ export async function providerRoutes(app: FastifyInstance) {
     return {
       provider: provider.id,
       label: provider.label,
-      configured: provider.isConfigured(),
+      hasStores: provider.hasStores,
+      configured: await provider.isConfigured(),
       selectedStore:
         provider.id === "kroger" && settings?.krogerLocationId
           ? { locationId: settings.krogerLocationId, name: settings.krogerLocationName }
@@ -154,7 +155,10 @@ export async function providerRoutes(app: FastifyInstance) {
       .object({ productId: z.string().min(1), locationId: z.string().optional() })
       .parse(request.body);
 
-    const locationId = body.locationId || (provider.id === "kroger" ? await getSavedKrogerLocationId(userId) : null);
+    const locationId =
+      body.locationId ||
+      (provider.id === "kroger" ? await getSavedKrogerLocationId(userId) : null) ||
+      provider.defaultLocationId?.();
     if (!locationId) {
       return reply.code(400).send({ error: "No store selected. Choose a store first.", code: "no_store" });
     }

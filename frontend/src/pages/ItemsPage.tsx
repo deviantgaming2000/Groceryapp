@@ -3,8 +3,9 @@ import { Input, Select, Textarea, units } from "../components/FormFields";
 import { api } from "../lib/api";
 
 function SourceBadge({ source }: { source?: string }) {
-  const isKroger = source === "kroger";
-  return <span className={`source-badge ${isKroger ? "kroger" : "manual"}`}>{isKroger ? "Kroger" : "Manual"}</span>;
+  const label = source === "kroger" ? "Kroger" : source === "walmart" ? "Walmart" : "Manual";
+  const cls = source === "kroger" || source === "walmart" ? source : "manual";
+  return <span className={`source-badge ${cls}`}>{label}</span>;
 }
 
 export function ItemsPage() {
