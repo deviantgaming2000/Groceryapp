@@ -45,6 +45,15 @@ export const CREDENTIAL_SPECS: CredentialSpec[] = [
     docsUrl: "https://console.cloud.google.com/google/maps-apis",
     fields: [{ key: "apiKey", label: "API Key", secret: true }],
     envMap: { apiKey: "GOOGLE_MAPS_API_KEY" }
+  },
+  {
+    provider: "walmart-scraper",
+    label: "Walmart (self-hosted scraper)",
+    description:
+      "Free alternative to SerpApi: a self-hosted Walmart price scraper. Point this at the running scraper service — it can live on this machine or a remote server.",
+    docsUrl: "https://github.com/deviantgaming2000/walmart-scraper",
+    fields: [{ key: "baseUrl", label: "Scraper URL", secret: false, placeholder: "http://localhost:8090" }],
+    envMap: { baseUrl: "WALMART_SCRAPER_URL" }
   }
 ];
 

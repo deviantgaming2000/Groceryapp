@@ -38,7 +38,8 @@ function guessUnit(size?: string): string {
 
 const PROVIDERS = [
   { id: "kroger", label: "Kroger / Fry's" },
-  { id: "walmart", label: "Walmart" }
+  { id: "walmart", label: "Walmart" },
+  { id: "walmart-scraper", label: "Walmart (self-hosted)" }
 ] as const;
 type ProviderId = (typeof PROVIDERS)[number]["id"];
 
@@ -343,7 +344,7 @@ export function FindProductsPage() {
               <div className="toolbar" style={{ marginTop: 10 }}>
                 <label className="field" style={{ flex: 1, minWidth: 160 }}>
                   <span>Or enter a store ID directly</span>
-                  <input value={directId} onChange={(e) => setDirectId(e.target.value)} placeholder={provider === "walmart" ? "e.g. 2280 (from the store's walmart.com URL)" : "store ID"} />
+                  <input value={directId} onChange={(e) => setDirectId(e.target.value)} placeholder={provider.startsWith("walmart") ? "e.g. 2280 (from the store's walmart.com URL)" : "store ID"} />
                 </label>
                 <button type="button" className="secondary" disabled={!directId.trim()} onClick={() => selectStore(directId.trim())}>Use this ID</button>
               </div>

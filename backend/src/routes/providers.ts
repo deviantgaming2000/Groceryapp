@@ -74,7 +74,9 @@ async function ensureLocalStore(userId: string, providerId: string, loc: Normali
 // Maps a provider to the UserSettings columns that hold its selected store.
 function savedStoreColumns(providerId: string): { id: string; name: string } | null {
   if (providerId === "kroger") return { id: "krogerLocationId", name: "krogerLocationName" };
-  if (providerId === "walmart") return { id: "walmartStoreId", name: "walmartStoreName" };
+  // Both Walmart providers share the same physical stores, so they share the saved store.
+  if (providerId === "walmart" || providerId === "walmart-scraper")
+    return { id: "walmartStoreId", name: "walmartStoreName" };
   return null;
 }
 
