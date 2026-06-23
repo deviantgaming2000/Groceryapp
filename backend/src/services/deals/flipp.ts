@@ -62,7 +62,13 @@ function normalize(item: FlippItem, zip?: string): NormalizedDeal {
     loyaltyRequired,
     description,
     imageUrl: item.clipping_image_url || item.large_image_url,
-    sourceUrl: item.flyer_id ? `https://flipp.com/flyers/${item.flyer_id}` : "https://flipp.com",
+    // Deep-link to the specific item. Flipp's current router uses /items/{flyer_item_id};
+    // the old /flyers/{flyer_id} path 404s. Fall back to the flyer, then the homepage.
+    sourceUrl: item.flyer_item_id
+      ? `https://flipp.com/items/${item.flyer_item_id}`
+      : item.flyer_id
+        ? `https://flipp.com/flyers/${item.flyer_id}`
+        : "https://flipp.com",
     validFrom: item.valid_from ?? null,
     validTo: item.valid_to ?? null,
     category: item.category,
