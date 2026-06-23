@@ -33,22 +33,34 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function parsePostPriceText(text?: string | null): { digitalCoupon: boolean; loyaltyRequired: boolean } {
+  if (!text) return { digitalCoupon: false, loyaltyRequired: false };
+  const t = text.toLowerCase();
+  return {
+    digitalCoupon: t.includes("digital coupon") || t.includes("digital deal") || t.includes("e-coupon"),
+    loyaltyRequired: t.includes("with card") || t.includes("member") || t.includes("loyalty") || t.includes("rewards")
+  };
+}
+
 function normalize(item: FlippItem, zip?: string): NormalizedDeal {
   const sale = num(item.current_price);
   const regular = num(item.original_price);
+  const { digitalCoupon, loyaltyRequired } = parsePostPriceText((item as any).post_price_text);
+  const description = [item.sale_story, item.pre_price_text, (item as any).post_price_text]
+    .filter(Boolean).join(" · ") || undefined;
   return {
     source: "flipp",
-    storeName: item.merchant || item.merchant_name,
+    storeName: item.merchant_name || item.merchant,
     location: zip,
     productName: item.name || "Flyer deal",
     brand: item.brand,
     salePrice: sale,
     regularPrice: regular,
     discountAmount: regular != null && sale != null && regular > sale ? Number((regular - sale).toFixed(2)) : null,
-    couponRequired: false,
-    digitalCoupon: false,
-    loyaltyRequired: false,
-    description: item.sale_story || item.pre_price_text,
+    couponRequired: digitalCoupon,
+    digitalCoupon,
+    loyaltyRequired,
+    description,
     imageUrl: item.clipping_image_url || item.large_image_url,
     sourceUrl: item.flyer_id ? `https://flipp.com/flyers/${item.flyer_id}` : "https://flipp.com",
     validFrom: item.valid_from ?? null,
@@ -103,11 +115,41 @@ export const flippDealsProvider: DealsProvider = {
 
   async searchDeals(params: DealsSearchParams) {
     if (!params.zip) throw new ProviderError("Enter a ZIP code to find local flyer deals.", "bad_request", 400);
-    return fetchItems(params.query?.trim() || "grocery", params.zip, params.limit ?? 40);
+    const term = params.query?.trim();
+    // When no specific query is given, pull a broad mix of common categories so the
+    // page isn't empty. "grocery" matches the store-category label (not products).
+    if (!term) {
+      const broad = ["meat", "produce", "dairy", "snack", "beverage"];
+      const sets = await Promise.all(broad.map((t) => fetchItems(t, params.zip!, Math.ceil((params.limit ?? 40) / broad.length))));
+      const seen = new Set<string>();
+      const merged: NormalizedDeal[] = [];
+      for (const deals of sets) {
+        for (const d of deals) {
+          const key = d.productName + "|" + d.storeName;
+          if (!seen.has(key)) { seen.add(key); merged.push(d); }
+        }
+      }
+      return merged.slice(0, params.limit ?? 40);
+    }
+    return fetchItems(term, params.zip, params.limit ?? 40);
   },
 
   async getWeeklyAd(params: DealsSearchParams) {
     if (!params.zip) throw new ProviderError("Enter a ZIP code to load weekly-ad deals.", "bad_request", 400);
-    return fetchItems(params.query?.trim() || "grocery", params.zip, params.limit ?? 60);
+    const term = params.query?.trim();
+    if (!term) {
+      const broad = ["meat", "produce", "dairy", "snack", "beverage", "frozen", "bread"];
+      const sets = await Promise.all(broad.map((t) => fetchItems(t, params.zip!, Math.ceil((params.limit ?? 60) / broad.length))));
+      const seen = new Set<string>();
+      const merged: NormalizedDeal[] = [];
+      for (const deals of sets) {
+        for (const d of deals) {
+          const key = d.productName + "|" + d.storeName;
+          if (!seen.has(key)) { seen.add(key); merged.push(d); }
+        }
+      }
+      return merged.slice(0, params.limit ?? 60);
+    }
+    return fetchItems(term, params.zip, params.limit ?? 60);
   }
 };

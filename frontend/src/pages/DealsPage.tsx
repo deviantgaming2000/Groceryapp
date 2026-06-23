@@ -38,6 +38,8 @@ export function DealsPage() {
   const [searched, setSearched] = useState(false);
   const [matching, setMatching] = useState(false);
   const [error, setError] = useState("");
+  const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
+  const [savingIdx, setSavingIdx] = useState<number | null>(null);
 
   useEffect(() => {
     api<DealProvider[]>("/api/deals/providers").then(setProviders).catch(() => {});
@@ -62,6 +64,18 @@ export function DealsPage() {
       setDeals([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function saveCoupon(deal: Deal, idx: number) {
+    setSavingIdx(idx);
+    try {
+      await api("/api/deals/save-coupon", { method: "POST", body: JSON.stringify(deal) });
+      setSavedIds((prev) => new Set([...prev, idx]));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save coupon");
+    } finally {
+      setSavingIdx(null);
     }
   }
 
@@ -171,7 +185,18 @@ export function DealsPage() {
                     {d.loyaltyRequired && <span className="source-badge stale">Loyalty</span>}
                     {endsLabel(d.validTo) && <span className="source-badge manual">{endsLabel(d.validTo)}</span>}
                   </div>
-                  {d.sourceUrl && <a href={d.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "var(--brand2)", marginTop: "auto" }}>View source →</a>}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: "auto" }}>
+                    {d.sourceUrl && <a href={d.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "var(--brand2)" }}>View source →</a>}
+                    <button
+                      type="button"
+                      className={savedIds.has(i) ? "secondary" : ""}
+                      style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }}
+                      disabled={savingIdx === i || savedIds.has(i)}
+                      onClick={() => saveCoupon(d, i)}
+                    >
+                      {savedIds.has(i) ? "✓ Saved" : savingIdx === i ? "Saving…" : "+ Coupon"}
+                    </button>
+                  </div>
                 </div>
               </article>
             );

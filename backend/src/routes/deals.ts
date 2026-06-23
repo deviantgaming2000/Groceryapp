@@ -85,4 +85,75 @@ export async function dealRoutes(app: FastifyInstance) {
     const items = await prisma.groceryItem.findMany({ where: { userId, isActive: true }, select: { id: true, name: true } });
     return matchDealsToGroceryList({ deals: body.deals as NormalizedDeal[], groceryItems: items });
   });
+
+  // save-coupon: convert a NormalizedDeal into a Coupon row, auto-matching store/item.
+  app.post("/deals/save-coupon", async (request, reply) => {
+    const userId = await getDefaultUserId();
+    const dealSchema = z.object({
+      source: z.string(),
+      storeName: z.string().optional().nullable(),
+      productName: z.string(),
+      brand: z.string().optional().nullable(),
+      salePrice: z.number().nullable(),
+      regularPrice: z.number().nullable(),
+      discountAmount: z.number().nullable(),
+      digitalCoupon: z.boolean(),
+      loyaltyRequired: z.boolean(),
+      description: z.string().optional().nullable(),
+      validTo: z.string().optional().nullable(),
+    });
+    const deal = dealSchema.parse(request.body);
+
+    // Try to match a store by name
+    let storeId: string | null = null;
+    if (deal.storeName) {
+      const store = await prisma.store.findFirst({
+        where: { userId, isActive: true, name: { contains: deal.storeName.split(" ")[0], mode: "insensitive" } }
+      });
+      storeId = store?.id ?? null;
+    }
+
+    // Try to match an item by first word of product name
+    let groceryItemId: string | null = null;
+    const firstWord = deal.productName.split(" ").find(w => w.length > 3) ?? deal.productName.split(" ")[0];
+    const item = await prisma.groceryItem.findFirst({
+      where: { userId, isActive: true, name: { contains: firstWord, mode: "insensitive" } }
+    });
+    groceryItemId = item?.id ?? null;
+
+    // Determine coupon type from description/story
+    const story = (deal.description ?? "").toLowerCase();
+    let couponType: string = "dollar_off";
+    if (deal.digitalCoupon) couponType = "digital_coupon";
+    if (/buy\s+\d+\s+get\s+\d+/i.test(story)) couponType = "buy_x_get_y_free";
+    else if (/\d+%\s*off/i.test(story)) couponType = "percent_off";
+
+    const amountOff = deal.discountAmount ??
+      (deal.regularPrice != null && deal.salePrice != null && deal.regularPrice > deal.salePrice
+        ? Number((deal.regularPrice - deal.salePrice).toFixed(2))
+        : null);
+    const percentOff = couponType === "percent_off"
+      ? Number((/(\d+)%/.exec(story)?.[1] ?? "0"))
+      : null;
+
+    const coupon = await prisma.coupon.create({
+      data: {
+        userId,
+        storeId,
+        groceryItemId,
+        name: [deal.brand, deal.productName].filter(Boolean).join(" "),
+        couponType: couponType as any,
+        scope: groceryItemId ? "item" : storeId ? "store" : "order_total",
+        amountOff: couponType !== "percent_off" ? amountOff : null,
+        percentOff,
+        description: deal.description ?? null,
+        expiresAt: deal.validTo ? new Date(deal.validTo) : null,
+        isActive: true,
+        notes: `Imported from ${deal.source}`,
+      }
+    });
+
+    reply.code(201);
+    return { coupon, storeMatched: !!storeId, itemMatched: !!groceryItemId };
+  });
 }
