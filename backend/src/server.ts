@@ -11,6 +11,7 @@ import { compareRoutes } from "./routes/compare.js";
 import { csvRoutes } from "./routes/csv.js";
 import { providerRoutes } from "./routes/providers.js";
 import { credentialRoutes } from "./routes/credentials.js";
+import { dealRoutes } from "./routes/deals.js";
 import { prisma } from "./lib/prisma.js";
 
 export function buildServer() {
@@ -51,6 +52,7 @@ export function buildServer() {
   app.register(csvRoutes, { prefix: "/api" });
   app.register(providerRoutes, { prefix: "/api" });
   app.register(credentialRoutes, { prefix: "/api" });
+  app.register(dealRoutes, { prefix: "/api" });
 
   return app;
 }

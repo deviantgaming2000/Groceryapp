@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardList, Home, Percent, Search, Settings, ShoppingBasket, Store, Tags } from "lucide-react";
+import { BarChart3, ClipboardList, Home, Percent, Search, Settings, ShoppingBasket, Sparkles, Store, Tags } from "lucide-react";
 import { ReactNode } from "react";
 import { SystemStatus } from "./SystemStatus";
 import { PageTransition } from "./PageTransition";
@@ -11,6 +11,7 @@ const nav = [
   ["Stores", "stores", Store],
   ["Price Entry", "prices", Tags],
   ["Comparison", "compare", BarChart3],
+  ["Deals", "deals", Sparkles],
   ["Coupons", "coupons", Percent],
   ["Settings", "settings", Settings]
 ] as const;

@@ -1,0 +1,88 @@
+import { FastifyInstance, FastifyReply } from "fastify";
+import { z } from "zod";
+import { getDefaultUserId, prisma } from "../lib/prisma.js";
+import {
+  DealsSearchParams,
+  ProviderError,
+  dealsProviders,
+  getDealsProvider,
+  matchDealsToGroceryList,
+  NormalizedDeal
+} from "../services/deals/index.js";
+
+async function guard<T>(reply: FastifyReply, fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof ProviderError) {
+      reply.code(error.status).send({ error: error.message, code: error.code });
+      return undefined;
+    }
+    reply.code(502).send({ error: "Unexpected error finding deals.", code: "upstream" });
+    return undefined;
+  }
+}
+
+// Fill in ZIP / Kroger store from saved settings when the caller omits them.
+async function withDefaults(userId: string, q: Record<string, string>, providerId: string): Promise<DealsSearchParams> {
+  const settings = (await prisma.userSettings.findUnique({ where: { userId } })) as Record<string, any> | null;
+  return {
+    query: q.q || q.query,
+    zip: q.zip || settings?.homeZip || undefined,
+    storeId: q.storeId || (providerId === "kroger" ? settings?.krogerLocationId ?? undefined : undefined),
+    location: q.location || settings?.homeCity || undefined,
+    userId,
+    limit: q.limit ? Number(q.limit) : undefined
+  };
+}
+
+export async function dealRoutes(app: FastifyInstance) {
+  // List providers with availability — drives the source picker.
+  app.get("/deals/providers", async () => {
+    const out = [];
+    for (const p of Object.values(dealsProviders)) {
+      out.push({ id: p.id, label: p.label, needsConfig: p.needsConfig, configured: await p.isConfigured() });
+    }
+    return out;
+  });
+
+  // searchGroceryDeals({ source, query, zip, storeId }) → NormalizedDeal[]
+  app.get("/deals/search", async (request, reply) => {
+    const q = request.query as Record<string, string>;
+    const provider = getDealsProvider(q.source || "flipp");
+    if (!provider) return reply.code(404).send({ error: `Unknown deal source "${q.source}".` });
+    const userId = await getDefaultUserId();
+    const params = await withDefaults(userId, q, provider.id);
+    return guard(reply, () => provider.searchDeals(params));
+  });
+
+  // getWeeklyAds({ source, zip }) → NormalizedDeal[]
+  app.get("/deals/weekly-ad", async (request, reply) => {
+    const q = request.query as Record<string, string>;
+    const provider = getDealsProvider(q.source || "flipp");
+    if (!provider) return reply.code(404).send({ error: `Unknown deal source "${q.source}".` });
+    const userId = await getDefaultUserId();
+    const params = await withDefaults(userId, q, provider.id);
+    const fn = provider.getWeeklyAd ?? provider.searchDeals;
+    return guard(reply, () => fn.call(provider, params));
+  });
+
+  // Coupons (defaults to the user's own coupons via the manual provider).
+  app.get("/deals/coupons", async (request, reply) => {
+    const q = request.query as Record<string, string>;
+    const provider = getDealsProvider(q.source || "manual");
+    if (!provider) return reply.code(404).send({ error: `Unknown deal source "${q.source}".` });
+    const userId = await getDefaultUserId();
+    const params = await withDefaults(userId, q, provider.id);
+    const fn = provider.getCoupons ?? provider.searchDeals;
+    return guard(reply, () => fn.call(provider, params));
+  });
+
+  // matchDealsToGroceryList({ deals }) → deals annotated with matchedItemIds
+  app.post("/deals/match-list", async (request, reply) => {
+    const userId = await getDefaultUserId();
+    const body = z.object({ deals: z.array(z.any()) }).parse(request.body);
+    const items = await prisma.groceryItem.findMany({ where: { userId, isActive: true }, select: { id: true, name: true } });
+    return matchDealsToGroceryList({ deals: body.deals as NormalizedDeal[], groceryItems: items });
+  });
+}
