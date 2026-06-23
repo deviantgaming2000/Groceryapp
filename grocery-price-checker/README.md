@@ -15,6 +15,23 @@ The app answers:
 - Optional maps: Google Distance Matrix API
 - Auth mode: single-user local mode by default
 
+## Interface
+
+The app ships with a premium dark-mode visual system. It is a presentation layer only — all
+pricing, comparison, and savings logic is unchanged.
+
+- Deep-black canvas with an animated [Vanta.js](https://www.vantajs.com/) fog background,
+  retinted to the app's violet/cyan palette. The effect is bundled locally (no CDN) and is
+  click-safe (`pointer-events: none`, with mouse reactivity bound to `window`).
+- Glassmorphic panels, cards, and tables with blur, soft glows, and rounded corners.
+- Ghost-style buttons: filled by default, dissolving into a frosted-glass outline on hover.
+- Animated savings counters and loading shimmer states on the Comparison screen.
+- Mobile layout with a thumb-friendly bottom navigation bar and larger tap targets.
+- Honors `prefers-reduced-motion`.
+
+Most styling is centralized in `frontend/src/styles/app.css` via semantic class names and CSS
+variables, so the theme can be adjusted in one place.
+
 ## Run In Docker On A Server
 
 This is the recommended deployment path. It runs:
