@@ -1,9 +1,0 @@
-node_modules/
-frontend/dist/
-backend/dist/
-frontend/*.tsbuildinfo
-.env
-.DS_Store
-*.log
-postgres_data/
-

@@ -2,6 +2,11 @@ import { FormEvent, useEffect, useState } from "react";
 import { Input, Select, Textarea, units } from "../components/FormFields";
 import { api } from "../lib/api";
 
+function SourceBadge({ source }: { source?: string }) {
+  const isKroger = source === "kroger";
+  return <span className={`source-badge ${isKroger ? "kroger" : "manual"}`}>{isKroger ? "Kroger" : "Manual"}</span>;
+}
+
 export function ItemsPage() {
   const [items, setItems] = useState<any[]>([]);
   const [warning, setWarning] = useState("");
@@ -40,8 +45,8 @@ export function ItemsPage() {
       </form>
       {error && <p className="error">{error}</p>}
       {warning && <p className="warn">{warning}</p>}
-      <table><thead><tr><th>Name</th><th>Category</th><th>Need</th><th>Brand</th><th>Active</th></tr></thead><tbody>
-        {items.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{item.quantityNeeded} {item.unitType}</td><td>{item.preferredBrand || "-"}</td><td>{String(item.isActive)}</td></tr>)}
+      <table><thead><tr><th>Name</th><th>Category</th><th>Need</th><th>Brand</th><th>Source</th><th>Active</th></tr></thead><tbody>
+        {items.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{item.quantityNeeded} {item.unitType}</td><td>{item.preferredBrand || "-"}</td><td><SourceBadge source={item.source} /></td><td>{String(item.isActive)}</td></tr>)}
       </tbody></table>
     </section>
   );

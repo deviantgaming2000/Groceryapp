@@ -533,6 +533,62 @@ td small { color: var(--ink-soft); }
   animation: pulse 1.8s var(--ease) infinite;
 }
 
+/* ---------- Provider product cards (Kroger search) ---------- */
+.kroger-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.kroger-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.kroger-thumb {
+  height: 130px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.kroger-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.kroger-thumb span { color: var(--ink-soft); font-size: 12px; }
+.kroger-info { display: flex; flex-direction: column; gap: 7px; flex: 1; }
+.kroger-info > strong { color: #f3f7fb; font-size: 14px; line-height: 1.35; }
+.kroger-meta { color: var(--ink-soft); font-size: 12.5px; }
+.kroger-price { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.kroger-price b { font-family: var(--font-display); font-size: 20px; color: var(--accent); }
+.kroger-was { color: var(--ink-soft); text-decoration: line-through; font-size: 13px; }
+.kroger-unit { color: var(--ink-soft); font-size: 11.5px; }
+.kroger-badges { display: flex; gap: 6px; flex-wrap: wrap; min-height: 4px; }
+.kroger-card button { margin-top: auto; }
+
+/* ---------- Source / status badges ---------- */
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+.source-badge.kroger { color: #9bc2ff; border-color: rgba(60, 130, 246, 0.4); background: rgba(60, 130, 246, 0.12); }
+.source-badge.manual { color: var(--ink-soft); }
+.source-badge.promo { color: #07120d; background: var(--accent); border-color: transparent; }
+.source-badge.stale { color: var(--warn); border-color: rgba(255, 194, 102, 0.4); background: rgba(255, 194, 102, 0.1); }
+
 /* ---------- Animations ---------- */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(10px); }

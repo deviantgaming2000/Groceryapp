@@ -1,2 +1,0 @@
-"""Grocery price checker app."""
-

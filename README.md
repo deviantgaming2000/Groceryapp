@@ -188,6 +188,60 @@ GOOGLE_MAPS_API_KEY=your_key_here
 
 Only addresses are sent to Google when calculating distance. Results are cached in `distance_cache`.
 
+## Kroger / Fry's API Integration
+
+The app can search live Kroger/Fry's product data in addition to manual price entry. Manual entry
+always works; the API is optional. Keys are used **only on the backend** and are never exposed to
+the frontend.
+
+### Setup
+
+1. Create a developer account and an app at [developer.kroger.com](https://developer.kroger.com),
+   with access to the **Products** and **Locations** APIs.
+2. Add the credentials to `.env`:
+
+```bash
+KROGER_CLIENT_ID=your_client_id
+KROGER_CLIENT_SECRET=your_client_secret
+# Optional overrides:
+# KROGER_API_BASE=https://api.kroger.com
+# KROGER_OAUTH_SCOPE=product.compact
+```
+
+3. Restart the backend (credentials load at startup).
+
+### Usage
+
+1. Open **Find Products**.
+2. Choose a store (search by ZIP — prefilled from your saved home ZIP when available). The selected
+   store is saved to settings and reused for future searches.
+3. Search for a product, then **Add from Kroger** to import it into your Items and Price Entry.
+4. Imported prices show a **Kroger** badge and a **Refresh** button to re-fetch price/availability.
+
+### How it works
+
+A provider layer (`backend/src/services/providers/`) normalizes Kroger responses into a single
+internal product shape, fronted by secure `/api/kroger/*` routes that handle OAuth, token caching,
+and error handling. Imported products become normal `GroceryItem` + `PriceEntry` rows, so the
+comparison engine treats them like any other price. The structure is provider-agnostic, so Walmart
+and Safeway can be added later without a rewrite.
+
+### Coupons
+
+The Kroger Products API exposes regular vs. promo (loyalty) pricing rather than a separate coupons
+feed. The app captures promo pricing as a coupon signal (`couponEligible`, `couponData`) and shows
+a **Promo** badge. The data model is built so a richer coupon source can be added later.
+
+### Endpoints
+
+- `GET /api/kroger/status` — configuration and selected store
+- `GET /api/kroger/locations?zip=` — search store locations
+- `POST /api/kroger/store` — select/save the active store
+- `GET /api/kroger/products/search?term=` — normalized product search
+- `GET /api/kroger/products/:id` — normalized product details
+- `POST /api/kroger/import` — import a product into items + prices
+- `POST /api/kroger/prices/:id/refresh` — refresh a linked price entry
+
 ## CSV Import / Export
 
 Templates:

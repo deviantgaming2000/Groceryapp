@@ -9,6 +9,7 @@ import { settingsRoutes } from "./routes/settings.js";
 import { distanceRoutes } from "./routes/distance.js";
 import { compareRoutes } from "./routes/compare.js";
 import { csvRoutes } from "./routes/csv.js";
+import { providerRoutes } from "./routes/providers.js";
 import { prisma } from "./lib/prisma.js";
 
 export function buildServer() {
@@ -47,6 +48,7 @@ export function buildServer() {
   app.register(distanceRoutes, { prefix: "/api" });
   app.register(compareRoutes, { prefix: "/api" });
   app.register(csvRoutes, { prefix: "/api" });
+  app.register(providerRoutes, { prefix: "/api" });
 
   return app;
 }

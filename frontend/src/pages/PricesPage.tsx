@@ -196,6 +196,17 @@ export function PricesPage() {
     }
   }
 
+  async function refreshPrice(priceId: string) {
+    setError("");
+    try {
+      await api(`/api/kroger/prices/${priceId}/refresh`, { method: "POST" });
+      setMessage("Price refreshed from Kroger.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not refresh price");
+    }
+  }
+
   return (
     <section>
       <h1>Price Entry</h1>
@@ -286,7 +297,11 @@ export function PricesPage() {
               </tr>
             ) : (
               <tr key={price.id}>
-                <td>{price.store?.name}</td>
+                <td>
+                  {price.store?.name}
+                  {price.source === "kroger" && <span className="source-badge kroger" style={{ marginLeft: 6 }}>Kroger</span>}
+                  {price.couponEligible && <span className="source-badge promo" style={{ marginLeft: 6 }}>Promo</span>}
+                </td>
                 <td>{money(price.price)}</td>
                 <td>{price.packageQuantity} {price.packageUnit}</td>
                 <td>{equivalentUnitPrice(price, group.item)}</td>
@@ -295,6 +310,7 @@ export function PricesPage() {
                 <td>{dateOnly(price.expiresAt)}</td>
                 <td>{price.confidence}</td>
                 <td className="action-row">
+                  {price.source === "kroger" && <button className="secondary" type="button" onClick={() => refreshPrice(price.id)}>Refresh</button>}
                   <button type="button" onClick={() => setEditingPriceId(price.id)}>Edit</button>
                   <button className="danger" type="button" onClick={() => deletePrice(price.id)}>Remove</button>
                 </td>

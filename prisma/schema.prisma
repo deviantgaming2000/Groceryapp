@@ -72,6 +72,8 @@ model Store {
   longitude          Decimal? @db.Decimal(10, 7)
   phone              String?
   notes              String?
+  provider           String   @default("manual")
+  externalId         String?  @map("external_id")
   membershipRequired Boolean  @default(false) @map("membership_required")
   favorite           Boolean  @default(false)
   isActive           Boolean  @default(true) @map("is_active")
@@ -97,6 +99,10 @@ model GroceryItem {
   notes          String?
   preferredBrand String?  @map("preferred_brand")
   upc            String?
+  source            String  @default("manual")
+  externalProductId String? @map("external_product_id")
+  imageUrl          String? @map("image_url")
+  productUrl        String? @map("product_url")
   commonlyUsed   Boolean @default(false) @map("commonly_used")
   isActive       Boolean @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
@@ -164,6 +170,17 @@ model PriceEntry {
   expiresAt       DateTime?       @map("expires_at")
   notes           String?
   confidence      ConfidenceLevel @default(confirmed)
+  source            String   @default("manual")
+  externalProductId String?  @map("external_product_id")
+  regularPrice      Decimal? @map("regular_price") @db.Decimal(12, 2)
+  promoPrice        Decimal? @map("promo_price") @db.Decimal(12, 2)
+  imageUrl          String?  @map("image_url")
+  productUrl        String?  @map("product_url")
+  available         Boolean?
+  couponEligible    Boolean  @default(false) @map("coupon_eligible")
+  couponData        Json?    @map("coupon_data")
+  rawApiData        Json?    @map("raw_api_data")
+  lastSyncedAt      DateTime? @map("last_synced_at")
   isActive        Boolean         @default(true) @map("is_active")
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
@@ -240,6 +257,8 @@ model UserSettings {
   staleDays          Int      @default(14) @map("stale_days")
   veryStaleDays      Int      @default(30) @map("very_stale_days")
   googleMapsEnabled  Boolean  @default(false) @map("google_maps_enabled")
+  krogerLocationId   String?  @map("kroger_location_id")
+  krogerLocationName String?  @map("kroger_location_name")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

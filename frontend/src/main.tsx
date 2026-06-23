@@ -10,6 +10,7 @@ import { PricesPage } from "./pages/PricesPage";
 import { ComparePage } from "./pages/ComparePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { CouponsPage } from "./pages/CouponsPage";
+import { KrogerPage } from "./pages/KrogerPage";
 import "./styles/app.css";
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
     prices: <PricesPage />,
     compare: <ComparePage />,
     coupons: <CouponsPage />,
+    kroger: <KrogerPage />,
     settings: <SettingsPage />
   };
   return (
