@@ -1,0 +1,277 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UnitType {
+  each
+  lb
+  oz
+  gallon
+  quart
+  pint
+  fl_oz
+  pack
+  case
+  count
+}
+
+enum ConfidenceLevel {
+  confirmed
+  estimated
+  old
+  unknown
+}
+
+enum CouponType {
+  dollar_off
+  percent_off
+  bogo
+  buy_x_get_y_free
+  buy_x_save_z
+  membership_discount
+  digital_coupon
+}
+
+enum CouponScope {
+  item
+  store
+  grocery_list
+  order_total
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  stores       Store[]
+  groceryItems GroceryItem[]
+  groceryLists GroceryList[]
+  settings     UserSettings?
+
+  @@map("users")
+}
+
+model Store {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id")
+  name               String
+  storeType          String   @map("store_type")
+  address            String
+  city               String
+  state              String
+  zip                String
+  latitude           Decimal? @db.Decimal(10, 7)
+  longitude          Decimal? @db.Decimal(10, 7)
+  phone              String?
+  notes              String?
+  membershipRequired Boolean  @default(false) @map("membership_required")
+  favorite           Boolean  @default(false)
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  priceEntries PriceEntry[]
+  coupons      Coupon[]
+  distances    DistanceCache[]
+
+  @@index([userId])
+  @@map("stores")
+}
+
+model GroceryItem {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  name           String
+  category       String
+  quantityNeeded Decimal  @map("quantity_needed") @db.Decimal(12, 4)
+  unitType       UnitType @map("unit_type")
+  notes          String?
+  preferredBrand String?  @map("preferred_brand")
+  upc            String?
+  commonlyUsed   Boolean @default(false) @map("commonly_used")
+  isActive       Boolean @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listItems  GroceryListItem[]
+  prices     PriceEntry[]
+  coupons    Coupon[]
+
+  @@index([userId])
+  @@index([name])
+  @@map("grocery_items")
+}
+
+model GroceryList {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  name        String
+  notes       String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items   GroceryListItem[]
+  coupons Coupon[]
+
+  @@index([userId])
+  @@map("grocery_lists")
+}
+
+model GroceryListItem {
+  id            String   @id @default(cuid())
+  groceryListId String   @map("grocery_list_id")
+  groceryItemId String   @map("grocery_item_id")
+  quantityNeeded Decimal @map("quantity_needed") @db.Decimal(12, 4)
+  unitType      UnitType @map("unit_type")
+  checkedOff    Boolean  @default(false) @map("checked_off")
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  groceryList GroceryList @relation(fields: [groceryListId], references: [id], onDelete: Cascade)
+  groceryItem GroceryItem @relation(fields: [groceryItemId], references: [id], onDelete: Restrict)
+
+  @@unique([groceryListId, groceryItemId])
+  @@map("grocery_list_items")
+}
+
+model PriceEntry {
+  id              String          @id @default(cuid())
+  userId          String          @map("user_id")
+  groceryItemId   String          @map("grocery_item_id")
+  storeId         String          @map("store_id")
+  price           Decimal         @db.Decimal(12, 2)
+  packageQuantity Decimal         @map("package_quantity") @db.Decimal(12, 4)
+  packageUnit     UnitType        @map("package_unit")
+  brand           String?
+  salePrice       Boolean         @default(false) @map("sale_price")
+  couponApplied   Boolean         @default(false) @map("coupon_applied")
+  couponDetails   String?         @map("coupon_details")
+  taxApplicable   Boolean         @default(false) @map("tax_applicable")
+  recordedAt      DateTime        @default(now()) @map("recorded_at")
+  expiresAt       DateTime?       @map("expires_at")
+  notes           String?
+  confidence      ConfidenceLevel @default(confirmed)
+  isActive        Boolean         @default(true) @map("is_active")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  groceryItem GroceryItem @relation(fields: [groceryItemId], references: [id], onDelete: Restrict)
+  store       Store       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  applications CouponApplication[]
+
+  @@index([groceryItemId])
+  @@index([storeId])
+  @@index([recordedAt])
+  @@map("price_entries")
+}
+
+model Coupon {
+  id              String      @id @default(cuid())
+  userId          String      @map("user_id")
+  storeId         String?     @map("store_id")
+  groceryItemId   String?     @map("grocery_item_id")
+  groceryListId   String?     @map("grocery_list_id")
+  name            String
+  couponType      CouponType  @map("coupon_type")
+  scope           CouponScope
+  amountOff       Decimal?    @map("amount_off") @db.Decimal(12, 2)
+  percentOff      Decimal?    @map("percent_off") @db.Decimal(5, 2)
+  description     String?
+  expiresAt       DateTime?   @map("expires_at")
+  allowExpired        Boolean     @default(false) @map("allow_expired")
+  buyQuantity         Int?        @map("buy_quantity")
+  freeQuantity        Int?        @map("free_quantity")
+  limitPerTransaction Int?        @map("limit_per_transaction")
+  isActive            Boolean     @default(true) @map("is_active")
+  notes               String?
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  store       Store?       @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  groceryItem GroceryItem? @relation(fields: [groceryItemId], references: [id], onDelete: SetNull)
+  groceryList GroceryList? @relation(fields: [groceryListId], references: [id], onDelete: SetNull)
+  applications CouponApplication[]
+
+  @@index([userId])
+  @@map("coupons")
+}
+
+model CouponApplication {
+  id           String   @id @default(cuid())
+  couponId     String   @map("coupon_id")
+  priceEntryId String?  @map("price_entry_id")
+  groceryListId String? @map("grocery_list_id")
+  discountAmount Decimal @map("discount_amount") @db.Decimal(12, 2)
+  appliedAt    DateTime @default(now()) @map("applied_at")
+  notes        String?
+
+  coupon     Coupon      @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  priceEntry PriceEntry? @relation(fields: [priceEntryId], references: [id], onDelete: SetNull)
+
+  @@map("coupon_applications")
+}
+
+model UserSettings {
+  id                 String   @id @default(cuid())
+  userId             String   @unique @map("user_id")
+  homeAddress        String?  @map("home_address")
+  homeCity           String?  @map("home_city")
+  homeState          String?  @map("home_state")
+  homeZip            String?  @map("home_zip")
+  homeLatitude       Decimal? @map("home_latitude") @db.Decimal(10, 7)
+  homeLongitude      Decimal? @map("home_longitude") @db.Decimal(10, 7)
+  vehicleMpg         Decimal  @default(22) @map("vehicle_mpg") @db.Decimal(8, 2)
+  gasPricePerGallon  Decimal  @default(0) @map("gas_price_per_gallon") @db.Decimal(8, 2)
+  roundTrip          Boolean  @default(true) @map("round_trip")
+  costPerMileOverride Decimal? @map("cost_per_mile_override") @db.Decimal(8, 4)
+  staleDays          Int      @default(14) @map("stale_days")
+  veryStaleDays      Int      @default(30) @map("very_stale_days")
+  googleMapsEnabled  Boolean  @default(false) @map("google_maps_enabled")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model DistanceCache {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  storeId         String   @map("store_id")
+  originHash      String   @map("origin_hash")
+  oneWayMiles     Decimal  @map("one_way_miles") @db.Decimal(10, 2)
+  oneWayMinutes   Int?     @map("one_way_minutes")
+  source          String   @default("manual")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId, originHash])
+  @@map("distance_cache")
+}
+
+model ReferenceOption {
+  id        String   @id @default(cuid())
+  kind      String
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([kind, value])
+  @@map("reference_options")
+}
+
