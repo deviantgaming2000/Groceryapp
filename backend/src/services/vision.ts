@@ -56,7 +56,7 @@ const PROMPT_TAIL =
 function sanitizeResult(r: ReadDealResult): ReadDealResult {
   let price = r.price;
   if (price != null && (price <= 0 || price > 999)) price = null;
-  if (price != null && r.dealText && /\b(free|bogo|buy\s*\d+\s*get|save|\$?\d[\d.]*\s*(off|back))\b/i.test(r.dealText)) {
+  if (price != null && r.dealText && /\b(free|bogo|buy\s*\d+\s*get|save|off|cash\s*back)\b/i.test(r.dealText)) {
     price = null;
   }
   return { ...r, price };
