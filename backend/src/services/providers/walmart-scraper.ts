@@ -104,6 +104,13 @@ interface SearchResponse {
   results?: ScrapedItem[];
 }
 
+// Search-result cache. The scraper is rate-limited and bot-detected, so we cache each
+// (store, query) result for ~a day and serve repeat searches (browse, refresh, bulk)
+// from memory instead of hitting Walmart again. Tunable via WALMART_CACHE_TTL_MS.
+const SEARCH_TTL_MS = Number(process.env.WALMART_CACHE_TTL_MS) || 24 * 60 * 60 * 1000;
+const CACHE_FETCH = 40; // fetch a generous set once so all callers can be served from cache
+const searchCache = new Map<string, { at: number; products: NormalizedProduct[] }>();
+
 // The scraper can't look a product up by Walmart item id, so we cache the products
 // from the latest searches. import/getProduct then resolves the picked product
 // immediately after a search (the normal flow) without re-scraping.
@@ -251,18 +258,26 @@ export const walmartScraperProvider: GroceryProvider = {
   async searchProducts(params: ProductSearchParams) {
     if (!params.term) throw new ProviderError("Enter a search term.", "bad_request", 400);
     const limit = params.limit ?? 15;
-    // Over-fetch so the page still fills after dropping items not stocked locally.
-    const fetchLimit = Math.min(limit * 2, 40);
-    const qs = new URLSearchParams({ query: params.term, store: "walmart", limit: String(fetchLimit) });
+    const cacheKey = `${params.locationId ?? ONLINE_STORE_ID}|${params.term.trim().toLowerCase()}`;
+
+    // Serve a recent cached search to avoid re-hitting the scraper (bot-detection safety).
+    const hit = searchCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < SEARCH_TTL_MS) {
+      hit.products.forEach(remember);
+      return hit.products.slice(0, limit);
+    }
+
+    // Fetch a generous set once; cache it for the day. Results keep fulfillment data
+    // (localInStock / fulfillmentType) — the UI badges them and defaults to local-only,
+    // and bulk auto-import enforces local-only.
+    const qs = new URLSearchParams({ query: params.term, store: "walmart", limit: String(CACHE_FETCH) });
     if (params.locationId && params.locationId !== ONLINE_STORE_ID) qs.set("storeId", params.locationId);
 
     const data = await scraperFetch<SearchResponse>(`/search?${qs.toString()}`);
-    // Return all results WITH fulfillment data (localInStock / fulfillmentType); the
-    // UI badges them and defaults to a "local stock only" view, and bulk auto-import
-    // enforces local-only. Keeping ship/marketplace here lets the user opt in to them.
     const products = (data.results ?? []).map((item) => normalize(item, params.locationId));
+    searchCache.set(cacheKey, { at: Date.now(), products });
     products.forEach(remember);
-    return products;
+    return products.slice(0, limit);
   },
 
   async getProduct(externalProductId: string, _locationId?: string) {
