@@ -74,9 +74,11 @@ export function FlyersPage() {
     }
   }
 
-  // Batch-read every image-only item in the flyer using a parallel worker pool —
-  // the local model is idle most of the time, so push several reads at once.
-  const VISION_CONCURRENCY = 6;
+  // Batch-read every image-only item in the flyer. NOTE: a single mlx_vlm.server
+  // (one model instance) is NOT safe for concurrent generation — parallel requests
+  // corrupt each other's output into gibberish — so we keep this at 1. To actually
+  // parallelize, run multiple model instances behind a round-robin (see notes).
+  const VISION_CONCURRENCY = 1;
   async function readAllUnpriced() {
     const targets = items.map((d, i) => ({ d, i })).filter(({ d }) => d.salePrice == null && d.imageUrl);
     if (!targets.length) return;
