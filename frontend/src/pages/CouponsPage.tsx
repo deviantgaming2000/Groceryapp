@@ -36,10 +36,33 @@ export function CouponsPage() {
   const [lists, setLists] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
   const [couponType, setCouponType] = useState<CouponType>("dollar_off");
+  const [showInactive, setShowInactive] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const load = () => Promise.all([api<any[]>("/api/items"), api<any[]>("/api/stores"), api<any[]>("/api/lists"), api<any[]>("/api/coupons")]).then(([i, s, l, c]) => { setItems(i); setStores(s); setLists(l); setCoupons(c); });
   useEffect(() => { void load(); }, []);
+
+  async function deactivate(id: string) {
+    setError("");
+    try {
+      await api(`/api/coupons/${id}`, { method: "DELETE" });
+      setMessage("Coupon deactivated.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not deactivate coupon");
+    }
+  }
+
+  async function reactivate(id: string) {
+    setError("");
+    try {
+      await api(`/api/coupons/${id}`, { method: "PATCH", body: JSON.stringify({ isActive: true }) });
+      setMessage("Coupon reactivated.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reactivate coupon");
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,7 +142,7 @@ export function CouponsPage() {
       <h2>Active deals</h2>
       <table>
         <thead>
-          <tr><th>Name</th><th>Type</th><th>Scope</th><th>Deal</th><th>Item / Store</th><th>Expires</th><th>Status</th></tr>
+          <tr><th>Name</th><th>Type</th><th>Scope</th><th>Deal</th><th>Item / Store</th><th>Expires</th><th>Status</th><th>Actions</th></tr>
         </thead>
         <tbody>
           {coupons.filter((c) => c.isActive).map((coupon) => {
@@ -133,11 +156,42 @@ export function CouponsPage() {
                 <td style={{ fontSize: 12 }}>{[coupon.groceryItem?.name, coupon.store?.name].filter(Boolean).join(" · ") || "Any"}</td>
                 <td>{dateOnly(coupon.expiresAt) || "—"}</td>
                 <td>{expired ? <span className="error">Expired</span> : <span style={{ color: "var(--accent)" }}>Active</span>}</td>
+                <td><button type="button" className="danger" onClick={() => deactivate(coupon.id)}>Deactivate</button></td>
               </tr>
             );
           })}
+          {coupons.filter((c) => c.isActive).length === 0 && (
+            <tr><td colSpan={8} style={{ color: "var(--ink-soft)" }}>No active deals.</td></tr>
+          )}
         </tbody>
       </table>
+
+      {coupons.some((c) => !c.isActive) && (
+        <div style={{ marginTop: 16 }}>
+          <button type="button" className="secondary" onClick={() => setShowInactive((v) => !v)}>
+            {showInactive ? "Hide" : "Show"} inactive deals ({coupons.filter((c) => !c.isActive).length})
+          </button>
+          {showInactive && (
+            <table style={{ marginTop: 10, opacity: 0.85 }}>
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Deal</th><th>Item / Store</th><th>Expires</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {coupons.filter((c) => !c.isActive).map((coupon) => (
+                  <tr key={coupon.id}>
+                    <td>{coupon.name}</td>
+                    <td>{couponTypeLabels[coupon.couponType as CouponType] ?? coupon.couponType}</td>
+                    <td className="cheap">{promoDescription(coupon)}</td>
+                    <td style={{ fontSize: 12 }}>{[coupon.groceryItem?.name, coupon.store?.name].filter(Boolean).join(" · ") || "Any"}</td>
+                    <td>{dateOnly(coupon.expiresAt) || "—"}</td>
+                    <td><button type="button" onClick={() => reactivate(coupon.id)}>Reactivate</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </section>
   );
 }
