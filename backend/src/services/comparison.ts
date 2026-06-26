@@ -1,6 +1,8 @@
 import { CouponScope, CouponType } from "@prisma/client";
 import { drivingCost } from "./travel.js";
-import { packagesNeeded, unitPrice, UnitType, unitsCompatible } from "./units.js";
+import { normalizeQuantity, packagesNeeded, unitPrice, UnitType, unitsCompatible } from "./units.js";
+
+const COUNT_FAMILY = ["each", "count", "pack", "case"];
 
 export type CompareInput = {
   list: {
@@ -177,15 +179,25 @@ export function compareGroceryList(input: CompareInput) {
       // convert it using the item's "approx per each" equivalence (e.g. 1 apple ≈ 0.4 lb).
       const eachEq = listItem.groceryItem.eachEquivQuantity;
       const eachEqUnit = listItem.groceryItem.eachEquivUnit ?? undefined;
-      if (
-        eachEq && eachEqUnit &&
-        ["each", "count", "pack", "case"].includes(pkgUnit) &&
-        !unitsCompatible(pkgUnit, neededUnit) &&
-        unitsCompatible(eachEqUnit, neededUnit)
-      ) {
-        pkgQuantity = entry.packageQuantity * eachEq;
-        warnings.push(`Estimated ${entry.packageQuantity} ${entry.packageUnit} ≈ ${pkgQuantity.toFixed(2)} ${eachEqUnit} (~${eachEq} ${eachEqUnit}/each)`);
-        pkgUnit = eachEqUnit;
+      if (eachEq && eachEqUnit && !unitsCompatible(pkgUnit, neededUnit)) {
+        if (COUNT_FAMILY.includes(pkgUnit) && unitsCompatible(eachEqUnit, neededUnit)) {
+          // Price is per-each/count, item compares by weight/volume → convert up.
+          // (e.g. "1 each" apple × 0.4 lb/each = 0.4 lb)
+          pkgQuantity = entry.packageQuantity * eachEq;
+          warnings.push(`Estimated ${entry.packageQuantity} ${entry.packageUnit} ≈ ${pkgQuantity.toFixed(2)} ${eachEqUnit} (~${eachEq} ${eachEqUnit}/each)`);
+          pkgUnit = eachEqUnit;
+        } else if (COUNT_FAMILY.includes(neededUnit) && unitsCompatible(pkgUnit, eachEqUnit)) {
+          // Price is per-weight/volume, item compares by each/count → convert down.
+          // (e.g. a 3 lb price ÷ 0.4 lb/each ≈ 7.5 each)
+          const pkgBase = normalizeQuantity(entry.packageQuantity, pkgUnit);
+          const eachBase = normalizeQuantity(eachEq, eachEqUnit);
+          const countEquiv = pkgBase.quantity / eachBase.quantity;
+          if (countEquiv > 0) {
+            warnings.push(`Estimated ${entry.packageQuantity} ${entry.packageUnit} ≈ ${countEquiv.toFixed(2)} ${neededUnit} (~${eachEq} ${eachEqUnit}/each)`);
+            pkgQuantity = countEquiv;
+            pkgUnit = neededUnit;
+          }
+        }
       }
 
       if (!unitsCompatible(neededUnit, pkgUnit)) {
