@@ -74,8 +74,9 @@ export function FlyersPage() {
     }
   }
 
-  // Batch-read every image-only item in the flyer, sequentially with a short
-  // delay so the local model isn't hammered.
+  // Batch-read every image-only item in the flyer using a parallel worker pool —
+  // the local model is idle most of the time, so push several reads at once.
+  const VISION_CONCURRENCY = 6;
   async function readAllUnpriced() {
     const targets = items.map((d, i) => ({ d, i })).filter(({ d }) => d.salePrice == null && d.imageUrl);
     if (!targets.length) return;
@@ -84,21 +85,28 @@ export function FlyersPage() {
     setBatch({ running: true, done: 0, total: targets.length });
     let done = 0;
     let found = 0;
-    for (const { d, i } of targets) {
-      try {
-        const res = await api<{ price: number | null; dealText: string | null }>("/api/deals/read-image", {
-          method: "POST",
-          body: JSON.stringify({ imageUrl: d.imageUrl, productName: d.productName })
-        });
-        if (res.price != null || res.dealText) found++;
-        setItems((list) => list.map((x, idx) => idx === i ? { ...x, salePrice: res.price ?? x.salePrice, dealText: res.dealText ?? x.dealText } : x));
-      } catch (err) {
-        setError((e) => e || (err instanceof Error ? err.message : "A read failed"));
+    let cursor = 0;
+
+    async function worker() {
+      while (cursor < targets.length) {
+        const { d, i } = targets[cursor++];
+        try {
+          const res = await api<{ price: number | null; dealText: string | null }>("/api/deals/read-image", {
+            method: "POST",
+            body: JSON.stringify({ imageUrl: d.imageUrl, productName: d.productName })
+          });
+          if (res.price != null || res.dealText) found++;
+          setItems((list) => list.map((x, idx) => idx === i ? { ...x, salePrice: res.price ?? x.salePrice, dealText: res.dealText ?? x.dealText } : x));
+        } catch (err) {
+          setError((e) => e || (err instanceof Error ? err.message : "A read failed"));
+        }
+        done++;
+        setBatch({ running: true, done, total: targets.length });
       }
-      done++;
-      setBatch({ running: true, done, total: targets.length });
-      await new Promise((r) => setTimeout(r, 300));
     }
+
+    const pool = Math.min(VISION_CONCURRENCY, targets.length);
+    await Promise.all(Array.from({ length: pool }, () => worker()));
     setBatch({ running: false, done, total: targets.length });
     setMessage(`Read ${done} image${done === 1 ? "" : "s"} — found a price or deal on ${found}.`);
   }
