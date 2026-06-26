@@ -44,12 +44,34 @@ export function FlyersPage() {
   const [loadingItems, setLoadingItems] = useState(false);
   const [filter, setFilter] = useState("");
   const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [reading, setReading] = useState<Record<string, boolean>>({});
+  const [visionOn, setVisionOn] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     api<any>("/api/settings").then((s) => { if (s?.homeZip) setZip((z) => z || s.homeZip); }).catch(() => {});
+    api<{ configured: boolean }>("/api/deals/vision-status").then((s) => setVisionOn(s.configured)).catch(() => {});
   }, []);
+
+  async function readImage(idx: number, key: string) {
+    const deal = items[idx];
+    if (!deal?.imageUrl) return;
+    setError("");
+    setReading((r) => ({ ...r, [key]: true }));
+    try {
+      const res = await api<{ price: number | null; dealText: string | null }>("/api/deals/read-image", {
+        method: "POST",
+        body: JSON.stringify({ imageUrl: deal.imageUrl, productName: deal.productName })
+      });
+      setItems((list) => list.map((d, i) => i === idx ? { ...d, salePrice: res.price ?? d.salePrice, dealText: res.dealText ?? d.dealText } : d));
+      if (res.price == null && !res.dealText) setMessage(`Vision couldn't read a price for "${deal.productName}".`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vision read failed");
+    } finally {
+      setReading((r) => ({ ...r, [key]: false }));
+    }
+  }
 
   async function loadFlyers(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
@@ -207,9 +229,16 @@ export function FlyersPage() {
                           {d.digitalCoupon && <span className="source-badge kroger">Digital</span>}
                           {d.loyaltyRequired && <span className="source-badge stale">Loyalty</span>}
                         </div>
-                        <button type="button" className={saved[key] ? "secondary" : ""} disabled={saved[key]} onClick={() => saveDeal(d, key)} style={{ marginTop: "auto" }}>
-                          {saved[key] ? "✓ Saved" : "Save to coupons"}
-                        </button>
+                        <div className="action-row" style={{ marginTop: "auto", gap: 6 }}>
+                          {visionOn && d.salePrice == null && d.imageUrl && (
+                            <button type="button" className="secondary" disabled={reading[key]} onClick={() => readImage(items.indexOf(d), key)}>
+                              {reading[key] ? "Reading…" : "🔍 Read price"}
+                            </button>
+                          )}
+                          <button type="button" className={saved[key] ? "secondary" : ""} disabled={saved[key]} onClick={() => saveDeal(d, key)}>
+                            {saved[key] ? "✓ Saved" : "Save to coupons"}
+                          </button>
+                        </div>
                       </div>
                     </article>
                   );

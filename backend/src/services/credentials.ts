@@ -54,6 +54,18 @@ export const CREDENTIAL_SPECS: CredentialSpec[] = [
     docsUrl: "https://github.com/deviantgaming2000/walmart-scraper",
     fields: [{ key: "baseUrl", label: "Scraper URL", secret: false, placeholder: "http://localhost:8090" }],
     envMap: { baseUrl: "WALMART_SCRAPER_URL" }
+  },
+  {
+    provider: "ollama-vision",
+    label: "Local Vision OCR (Ollama)",
+    description:
+      "Optional. Reads prices and deals off flyer clipping images using a local Ollama vision model (e.g. running on your Mac). Nothing leaves your network. Pull a model first: `ollama pull llama3.2-vision`.",
+    docsUrl: "https://ollama.com/search?c=vision",
+    fields: [
+      { key: "baseUrl", label: "Ollama URL", secret: false, placeholder: "http://192.168.1.50:11434" },
+      { key: "model", label: "Vision model", secret: false, placeholder: "llama3.2-vision" }
+    ],
+    envMap: { baseUrl: "OLLAMA_URL", model: "OLLAMA_VISION_MODEL" }
   }
 ];
 

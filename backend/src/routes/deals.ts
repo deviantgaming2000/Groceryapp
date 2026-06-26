@@ -10,6 +10,7 @@ import {
   NormalizedDeal
 } from "../services/deals/index.js";
 import { fetchFlyers, fetchFlyerItems } from "../services/deals/flipp.js";
+import { isVisionConfigured, readDealFromImage } from "../services/vision.js";
 
 async function guard<T>(reply: FastifyReply, fn: () => Promise<T>): Promise<T | undefined> {
   try {
@@ -98,6 +99,19 @@ export async function dealRoutes(app: FastifyInstance) {
     const zip = q.zip || settings?.homeZip;
     if (!zip) return reply.code(400).send({ error: "Enter a ZIP code to load this flyer.", code: "bad_request" });
     return guard(reply, () => fetchFlyerItems(id, zip, q.merchant));
+  });
+
+  // Whether the local vision OCR (Ollama) is configured — drives the "Read price" button.
+  app.get("/deals/vision-status", async () => {
+    return { configured: await isVisionConfigured() };
+  });
+
+  // Read a price/deal off a flyer clipping image using the local vision model.
+  app.post("/deals/read-image", async (request, reply) => {
+    const { imageUrl, productName } = z
+      .object({ imageUrl: z.string().url(), productName: z.string().optional() })
+      .parse(request.body);
+    return guard(reply, () => readDealFromImage(imageUrl, productName));
   });
 
   // matchDealsToGroceryList({ deals }) → deals annotated with matchedItemIds
