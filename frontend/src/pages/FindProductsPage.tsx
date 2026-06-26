@@ -98,7 +98,7 @@ export function FindProductsPage() {
   const [results, setResults] = useState<PProduct[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
-  const [localOnly, setLocalOnly] = useState(false);
+  const [localOnly, setLocalOnly] = useState(true);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -149,7 +149,7 @@ export function FindProductsPage() {
     setStatus(null);
     setResults([]);
     setSearched(false);
-    setLocalOnly(false);
+    setLocalOnly(true);
     setLocations([]);
     setChangingStore(false);
     setStates([]);

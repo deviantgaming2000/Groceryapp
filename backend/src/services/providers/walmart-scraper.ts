@@ -257,13 +257,10 @@ export const walmartScraperProvider: GroceryProvider = {
     if (params.locationId && params.locationId !== ONLINE_STORE_ID) qs.set("storeId", params.locationId);
 
     const data = await scraperFetch<SearchResponse>(`/search?${qs.toString()}`);
-    const products = (data.results ?? [])
-      .map((item) => normalize(item, params.locationId))
-      // Only list things actually available at the selected store (pickup/delivery).
-      // localInStock === false drops out-of-stock / warehouse-only / marketplace items;
-      // unknown (older scraper) is kept.
-      .filter((p) => p.localInStock !== false)
-      .slice(0, limit);
+    // Return all results WITH fulfillment data (localInStock / fulfillmentType); the
+    // UI badges them and defaults to a "local stock only" view, and bulk auto-import
+    // enforces local-only. Keeping ship/marketplace here lets the user opt in to them.
+    const products = (data.results ?? []).map((item) => normalize(item, params.locationId));
     products.forEach(remember);
     return products;
   },

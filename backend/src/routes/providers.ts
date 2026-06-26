@@ -420,7 +420,10 @@ export async function providerRoutes(app: FastifyInstance) {
             continue;
           }
         }
-        const best = pickBestProduct(term, products);
+        // Auto-import only locally-stocked items (drops ship-only warehouse/marketplace).
+        // Providers without fulfillment data (Kroger) leave localInStock undefined → kept.
+        const localProducts = products.filter((p) => p.localInStock !== false);
+        const best = pickBestProduct(term, localProducts);
         if (!best) {
           itemResults.push({ item: term, status: "not_found" });
           continue;
