@@ -253,7 +253,10 @@ export function FlyersPage() {
 
           {!loadingItems && shown.length > 0 && (
             <>
-              <p style={{ fontSize: 13, color: "var(--ink-soft)" }}>{shown.length} item{shown.length === 1 ? "" : "s"}{filter ? " match" : ""} · prices shown where Flipp provides them; others show the ad image.</p>
+              <p style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                Valid through {selected.validTo ? new Date(selected.validTo).toLocaleDateString() : "—"} · {items.filter((d) => d.salePrice != null).length}/{items.length} priced
+                {filter ? ` · ${shown.length} match` : ""} · reads cached until the sale ends.
+              </p>
               <div className="kroger-grid">
                 {shown.map((d, i) => {
                   const key = `${selected.id}-${i}-${d.productName}`;

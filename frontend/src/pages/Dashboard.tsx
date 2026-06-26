@@ -17,6 +17,7 @@ export function Dashboard({ setPage }: { setPage: (page: string) => void }) {
   const [prices, setPrices] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
+  const [flyers, setFlyers] = useState<any[]>([]);
 
   useEffect(() => {
     Promise.all([
@@ -30,6 +31,8 @@ export function Dashboard({ setPage }: { setPage: (page: string) => void }) {
       setStores(s.filter((store) => store.favorite));
       setCoupons(c.filter((coupon: any) => coupon.isActive));
     });
+    // Flyers fetched separately so a Flipp hiccup never breaks the dashboard.
+    api<any[]>("/api/deals/flyers").then(setFlyers).catch(() => {});
   }, []);
 
   const activeLists = lists.filter((list) => list.isActive);
@@ -38,6 +41,13 @@ export function Dashboard({ setPage }: { setPage: (page: string) => void }) {
     const days = Math.floor((new Date(c.expiresAt).getTime() - Date.now()) / 86_400_000);
     return days >= 0 && days <= 7;
   });
+  const endingFlyers = flyers
+    .filter((f) => {
+      if (!f.validTo) return false;
+      const days = Math.floor((new Date(f.validTo).getTime() - Date.now()) / 86_400_000);
+      return days >= 0 && days <= 2;
+    })
+    .sort((a, b) => new Date(a.validTo).getTime() - new Date(b.validTo).getTime());
 
   return (
     <section>
@@ -64,6 +74,16 @@ export function Dashboard({ setPage }: { setPage: (page: string) => void }) {
           {expiringSoon.map((c) => (
             <span key={c.id}>{c.name} — expires {dateOnly(c.expiresAt)}</span>
           ))}
+        </div>
+      )}
+
+      {endingFlyers.length > 0 && (
+        <div className="system-alert" style={{ marginTop: 12, cursor: "pointer" }} onClick={() => setPage("flyers")} role="button">
+          <strong>{endingFlyers.length} weekly flyer{endingFlyers.length > 1 ? "s" : ""} ending within 2 days</strong>
+          {endingFlyers.slice(0, 6).map((f) => (
+            <span key={f.id}>{f.merchant} — ends {dateOnly(f.validTo)}</span>
+          ))}
+          <span style={{ color: "var(--brand2)" }}>Open Flyers →</span>
         </div>
       )}
 
@@ -114,6 +134,20 @@ export function Dashboard({ setPage }: { setPage: (page: string) => void }) {
           <h2>Favorite Stores</h2>
           {stores.map((store) => <div className="row" key={store.id}><strong>{store.name}</strong><span>{store.city}, {store.state}</span></div>)}
         </article>
+
+        {flyers.length > 0 && (
+          <article>
+            <h2>Weekly Flyers</h2>
+            <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--ink-soft)" }}>{flyers.length} flyers available for your area{endingFlyers.length > 0 ? ` · ${endingFlyers.length} ending soon` : ""}.</p>
+            {endingFlyers.slice(0, 4).map((f) => (
+              <div className="row" key={f.id}>
+                <strong style={{ fontSize: 13 }}>{f.merchant}</strong>
+                <span style={{ fontSize: 12, color: "var(--warn)" }}>ends {dateOnly(f.validTo)}</span>
+              </div>
+            ))}
+            <button className="secondary" style={{ marginTop: 8, padding: "5px 11px", fontSize: 12 }} onClick={() => setPage("flyers")}>Browse flyers</button>
+          </article>
+        )}
 
         {coupons.length > 0 && (
           <article>
