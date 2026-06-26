@@ -81,12 +81,8 @@ function normalize(item: FlippItem, zip?: string): NormalizedDeal {
   };
 }
 
-async function fetchItems(query: string, zip: string, limit: number): Promise<NormalizedDeal[]> {
-  const key = `${zip}|${query}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.deals.slice(0, limit);
-
-  const url = `${BASE}/items/search?locale=en-us&postal_code=${encodeURIComponent(zip)}&q=${encodeURIComponent(query)}`;
+/** Shared GET against the backflipp API with timeout + clean error mapping. */
+async function flippGet(url: string): Promise<any> {
   let res: Response;
   try {
     const controller = new AbortController();
@@ -101,17 +97,107 @@ async function fetchItems(query: string, zip: string, limit: number): Promise<No
   }
   if (res.status === 429) throw new ProviderError("Flipp rate limit reached. Try again in a bit.", "rate_limited", 429);
   if (!res.ok) throw new ProviderError(`Flipp returned an error (${res.status}).`, "upstream", 502);
-
-  let json: any;
   try {
-    json = await res.json();
+    return await res.json();
   } catch {
-    throw new ProviderError("Flipp returned unexpected data; deals couldn't be parsed.", "upstream", 502);
+    throw new ProviderError("Flipp returned unexpected data; it couldn't be parsed.", "upstream", 502);
   }
+}
+
+async function fetchItems(query: string, zip: string, limit: number): Promise<NormalizedDeal[]> {
+  const key = `${zip}|${query}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.deals.slice(0, limit);
+
+  const url = `${BASE}/items/search?locale=en-us&postal_code=${encodeURIComponent(zip)}&q=${encodeURIComponent(query)}`;
+  const json = await flippGet(url);
   const items: FlippItem[] = json?.items ?? json?.ecom_items ?? [];
   const deals = items.filter((i) => i.name).map((i) => normalize(i, zip));
   cache.set(key, { at: Date.now(), deals });
   return deals.slice(0, limit);
+}
+
+// ---- Full weekly-ad flyers (richer than items/search) ----
+// The flyers endpoints return every item in a merchant's printed flyer, most with a
+// structured price plus a cropped image — far more than the keyword search returns.
+
+export interface FlippFlyer {
+  id: number;
+  merchant: string;
+  validFrom: string | null;
+  validTo: string | null;
+  logoUrl: string | null;
+}
+
+const flyersCache = new Map<string, { at: number; flyers: FlippFlyer[] }>();
+const flyerItemsCache = new Map<string, { at: number; deals: NormalizedDeal[] }>();
+
+/** List the weekly-ad flyers available for a postal code. */
+export async function fetchFlyers(zip: string): Promise<FlippFlyer[]> {
+  const hit = flyersCache.get(zip);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.flyers;
+  const json = await flippGet(`${BASE}/flyers?locale=en-us&postal_code=${encodeURIComponent(zip)}`);
+  const arr: any[] = Array.isArray(json) ? json : json?.flyers ?? [];
+  const flyers = arr
+    .filter((f) => f?.id)
+    .map((f) => ({
+      id: f.id,
+      merchant: f.merchant ?? f.merchant_name ?? "Store",
+      validFrom: f.valid_from ?? null,
+      validTo: f.valid_to ?? null,
+      logoUrl: f.storefront_logo_url ?? f.merchant_logo_url ?? f.logo_url ?? null
+    }))
+    .sort((a, b) => a.merchant.localeCompare(b.merchant));
+  flyersCache.set(zip, { at: Date.now(), flyers });
+  return flyers;
+}
+
+function normalizeFlyerItem(item: any, zip: string, merchant?: string): NormalizedDeal {
+  const sale = num(item.price);
+  const dealText = (typeof item.sale_story === "string" && item.sale_story.trim())
+    || (typeof item.discount === "string" && item.discount.trim())
+    || undefined;
+  return {
+    source: "flipp",
+    storeName: merchant,
+    location: zip,
+    productName: item.name || item.short_name || "Flyer item",
+    brand: item.brand || undefined,
+    salePrice: sale,
+    regularPrice: null,
+    discountAmount: null,
+    dealText,
+    couponRequired: false,
+    digitalCoupon: false,
+    loyaltyRequired: false,
+    description: dealText,
+    imageUrl: item.cutout_image_url || item.clipping_image_url || item.large_image_url || undefined,
+    sourceUrl: item.id
+      ? `https://flipp.com/items/${item.id}`
+      : item.flyer_id ? `https://flipp.com/flyers/${item.flyer_id}` : "https://flipp.com",
+    validFrom: item.valid_from ?? null,
+    validTo: item.valid_to ?? null,
+    category: undefined,
+    confidence: sale ? 0.7 : 0.4,
+    raw: item
+  };
+}
+
+/** Fetch every item in a single flyer (the full ad), as normalized deals. */
+export async function fetchFlyerItems(flyerId: number | string, zip: string, merchant?: string): Promise<NormalizedDeal[]> {
+  const key = `${flyerId}|${zip}`;
+  const hit = flyerItemsCache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.deals;
+  const json = await flippGet(`${BASE}/flyers/${encodeURIComponent(String(flyerId))}?locale=en-us&postal_code=${encodeURIComponent(zip)}`);
+  const items: any[] = json?.items ?? [];
+  // Keep items that carry a price or an image (drops bare section labels like "Pharmacy").
+  const deals = items
+    .filter((i) => i?.name && (i.price || i.cutout_image_url || i.clipping_image_url))
+    .map((i) => normalizeFlyerItem(i, zip, merchant))
+    // Priced items first, then image-only ones.
+    .sort((a, b) => Number(b.salePrice != null) - Number(a.salePrice != null));
+  flyerItemsCache.set(key, { at: Date.now(), deals });
+  return deals;
 }
 
 // Flipp's search can't be filtered to one merchant (it ignores merchant_id), so the

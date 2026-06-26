@@ -9,6 +9,7 @@ import {
   matchDealsToGroceryList,
   NormalizedDeal
 } from "../services/deals/index.js";
+import { fetchFlyers, fetchFlyerItems } from "../services/deals/flipp.js";
 
 async function guard<T>(reply: FastifyReply, fn: () => Promise<T>): Promise<T | undefined> {
   try {
@@ -76,6 +77,27 @@ export async function dealRoutes(app: FastifyInstance) {
     const params = await withDefaults(userId, q, provider.id);
     const fn = provider.getCoupons ?? provider.searchDeals;
     return guard(reply, () => fn.call(provider, params));
+  });
+
+  // List the full weekly-ad flyers for a postal code (Flipp).
+  app.get("/deals/flyers", async (request, reply) => {
+    const q = request.query as Record<string, string>;
+    const userId = await getDefaultUserId();
+    const settings = (await prisma.userSettings.findUnique({ where: { userId } })) as Record<string, any> | null;
+    const zip = q.zip || settings?.homeZip;
+    if (!zip) return reply.code(400).send({ error: "Enter a ZIP code to load flyers.", code: "bad_request" });
+    return guard(reply, () => fetchFlyers(zip));
+  });
+
+  // Every item in one flyer — the full ad (richer than keyword search).
+  app.get("/deals/flyers/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const q = request.query as Record<string, string>;
+    const userId = await getDefaultUserId();
+    const settings = (await prisma.userSettings.findUnique({ where: { userId } })) as Record<string, any> | null;
+    const zip = q.zip || settings?.homeZip;
+    if (!zip) return reply.code(400).send({ error: "Enter a ZIP code to load this flyer.", code: "bad_request" });
+    return guard(reply, () => fetchFlyerItems(id, zip, q.merchant));
   });
 
   // matchDealsToGroceryList({ deals }) → deals annotated with matchedItemIds
