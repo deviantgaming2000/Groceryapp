@@ -10,7 +10,7 @@ export type CompareInput = {
       id: string;
       quantityNeeded: number;
       unitType: UnitType;
-      groceryItem: { id: string; name: string; category: string; quantityNeeded?: number; unitType?: UnitType };
+      groceryItem: { id: string; name: string; category: string; quantityNeeded?: number; unitType?: UnitType; eachEquivQuantity?: number | null; eachEquivUnit?: UnitType | null };
     }>;
   };
   stores: Array<{ id: string; name: string; membershipRequired?: boolean }>;
@@ -168,33 +168,53 @@ export function compareGroceryList(input: CompareInput) {
       let neededUnit = listItem.unitType;
       const warnings: string[] = [];
       let usingPackageEach = false;
-      if (!unitsCompatible(neededUnit, entry.packageUnit)) {
+
+      // Effective package units — may be converted from per-each to weight/volume below.
+      let pkgQuantity = entry.packageQuantity;
+      let pkgUnit: UnitType = entry.packageUnit;
+
+      // If the price is sold per-each/count but the item compares by weight/volume,
+      // convert it using the item's "approx per each" equivalence (e.g. 1 apple ≈ 0.4 lb).
+      const eachEq = listItem.groceryItem.eachEquivQuantity;
+      const eachEqUnit = listItem.groceryItem.eachEquivUnit ?? undefined;
+      if (
+        eachEq && eachEqUnit &&
+        ["each", "count", "pack", "case"].includes(pkgUnit) &&
+        !unitsCompatible(pkgUnit, neededUnit) &&
+        unitsCompatible(eachEqUnit, neededUnit)
+      ) {
+        pkgQuantity = entry.packageQuantity * eachEq;
+        warnings.push(`Estimated ${entry.packageQuantity} ${entry.packageUnit} ≈ ${pkgQuantity.toFixed(2)} ${eachEqUnit} (~${eachEq} ${eachEqUnit}/each)`);
+        pkgUnit = eachEqUnit;
+      }
+
+      if (!unitsCompatible(neededUnit, pkgUnit)) {
         const itemDefaultUnit = listItem.groceryItem.unitType;
         const itemDefaultQuantity = listItem.groceryItem.quantityNeeded;
-        if (itemDefaultUnit && itemDefaultUnit !== neededUnit && unitsCompatible(itemDefaultUnit, entry.packageUnit)) {
+        if (itemDefaultUnit && itemDefaultUnit !== neededUnit && unitsCompatible(itemDefaultUnit, pkgUnit)) {
           neededUnit = itemDefaultUnit;
           neededQuantity = itemDefaultQuantity ?? neededQuantity;
           warnings.push(`List unit was ${listItem.unitType}; using item default ${neededQuantity} ${neededUnit} for comparison`);
         } else if (neededUnit === "each") {
           usingPackageEach = true;
-          warnings.push(`List needs ${neededQuantity} each; treating each as one store package of ${entry.packageQuantity} ${entry.packageUnit}`);
+          warnings.push(`List needs ${neededQuantity} each; treating each as one store package of ${pkgQuantity} ${pkgUnit}`);
         } else {
           return {
             storeId: store.id,
             storeName: store.name,
             missing: true,
             hasIgnoredPrice: true,
-            warnings: [`Price exists but unit mismatch: list needs ${listItem.unitType}, price is ${entry.packageUnit}`]
+            warnings: [`Price exists but unit mismatch: list needs ${listItem.unitType}, price is ${entry.packageUnit}. Tip: set an "approx per each" weight on this item to compare them.`]
           };
         }
       }
       const pkg = usingPackageEach
-        ? onePackagePerEach(neededQuantity, entry.packageQuantity, entry.packageUnit)
-        : packagesNeeded(neededQuantity, neededUnit, entry.packageQuantity, entry.packageUnit)!;
+        ? onePackagePerEach(neededQuantity, pkgQuantity, pkgUnit)
+        : packagesNeeded(neededQuantity, neededUnit, pkgQuantity, pkgUnit)!;
       const checkoutPrice = entry.price * pkg.packageCount;
       const consumedRatio = pkg.consumedQuantity / pkg.purchasedQuantity;
       const consumedValue = checkoutPrice * consumedRatio;
-      const unit = unitPrice(entry.price, entry.packageQuantity, entry.packageUnit);
+      const unit = unitPrice(entry.price, pkgQuantity, pkgUnit);
       const coupon = itemCouponDiscount(checkoutPrice, pkg.packageCount, listItem.groceryItem.id, store.id, input.coupons, now);
       const finalCheckoutPrice = Math.max(0, checkoutPrice - coupon.discount);
       const stale = staleStatus(entry.recordedAt, input.settings, now);

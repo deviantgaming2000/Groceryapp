@@ -15,8 +15,39 @@ export function ItemsPage() {
   const [mergeSource, setMergeSource] = useState<any | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [merging, setMerging] = useState(false);
+  const [weightItem, setWeightItem] = useState<any | null>(null);
+  const [weightQty, setWeightQty] = useState("");
+  const [weightUnit, setWeightUnit] = useState("lb");
+  const [savingWeight, setSavingWeight] = useState(false);
   const load = () => api<any[]>("/api/items").then(setItems);
   useEffect(() => { void load(); }, []);
+
+  function openWeight(item: any) {
+    setWeightItem(item);
+    setWeightQty(item.eachEquivQuantity != null ? String(item.eachEquivQuantity) : "");
+    setWeightUnit(item.eachEquivUnit ?? "lb");
+    setError("");
+  }
+
+  async function saveWeight() {
+    if (!weightItem) return;
+    setSavingWeight(true);
+    setError("");
+    try {
+      const qty = weightQty.trim() ? Number(weightQty) : null;
+      await api(`/api/items/${weightItem.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ eachEquivQuantity: qty, eachEquivUnit: qty ? weightUnit : null })
+      });
+      setWarning(qty ? `Set 1 each of "${weightItem.name}" ≈ ${qty} ${weightUnit}.` : `Cleared per-each weight for "${weightItem.name}".`);
+      setWeightItem(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save per-each weight");
+    } finally {
+      setSavingWeight(false);
+    }
+  }
 
   async function confirmMerge() {
     if (!mergeSource || !mergeTargetId) return;
@@ -66,19 +97,48 @@ export function ItemsPage() {
       </form>
       {error && <p className="error">{error}</p>}
       {warning && <p className="warn">{warning}</p>}
-      <table><thead><tr><th>Name</th><th>Category</th><th>Need</th><th>Brand</th><th>Source</th><th>Active</th><th>Actions</th></tr></thead><tbody>
+      <table><thead><tr><th>Name</th><th>Category</th><th>Need</th><th>~ per each</th><th>Brand</th><th>Source</th><th>Active</th><th>Actions</th></tr></thead><tbody>
         {items.map((item) => (
           <tr key={item.id}>
             <td>{item.name}</td>
             <td>{item.category}</td>
             <td>{item.quantityNeeded} {item.unitType}</td>
+            <td>{item.eachEquivQuantity != null ? `${item.eachEquivQuantity} ${item.eachEquivUnit}` : "-"}</td>
             <td>{item.preferredBrand || "-"}</td>
             <td><SourceBadge source={item.source} /></td>
             <td>{String(item.isActive)}</td>
-            <td><button className="secondary" type="button" onClick={() => { setMergeSource(item); setMergeTargetId(""); }}>Merge into…</button></td>
+            <td className="action-row">
+              <button className="secondary" type="button" onClick={() => openWeight(item)}>⚖ Per-each</button>
+              <button className="secondary" type="button" onClick={() => { setMergeSource(item); setMergeTargetId(""); }}>Merge into…</button>
+            </td>
           </tr>
         ))}
       </tbody></table>
+
+      {weightItem && (
+        <div className="modal-backdrop" onClick={() => !savingWeight && setWeightItem(null)}>
+          <div className="modal-card panel" onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginTop: 0 }}>Approx weight per each</h2>
+            <p style={{ margin: "0 0 14px", fontSize: 14 }}>
+              Set how much one <strong style={{ color: "var(--ink)" }}>{weightItem.name}</strong> weighs, so prices sold "each" can be compared against per-pound/ounce prices. E.g. 1 apple ≈ 0.4 lb. Leave blank to clear.
+            </p>
+            <div className="toolbar" style={{ margin: 0 }}>
+              <label className="field" style={{ minWidth: 120 }}>
+                <span>1 each ≈</span>
+                <input type="number" step="0.01" value={weightQty} onChange={(e) => setWeightQty(e.target.value)} placeholder="0.4" />
+              </label>
+              <label className="field" style={{ minWidth: 100 }}>
+                <span>Unit</span>
+                <select value={weightUnit} onChange={(e) => setWeightUnit(e.target.value)}>{units.map((u) => <option key={u} value={u}>{u}</option>)}</select>
+              </label>
+            </div>
+            <div className="action-row" style={{ marginTop: 16 }}>
+              <button type="button" onClick={saveWeight} disabled={savingWeight}>{savingWeight ? "Saving…" : "Save"}</button>
+              <button type="button" className="secondary" onClick={() => setWeightItem(null)} disabled={savingWeight}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {mergeSource && (
         <div className="modal-backdrop" onClick={() => !merging && setMergeSource(null)}>

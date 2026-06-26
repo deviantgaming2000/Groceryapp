@@ -103,6 +103,10 @@ model GroceryItem {
   externalProductId String? @map("external_product_id")
   imageUrl          String? @map("image_url")
   productUrl        String? @map("product_url")
+  // Optional "approx per each" equivalence so per-each prices can be compared
+  // against weight/volume prices (e.g. 1 apple ≈ 0.4 lb).
+  eachEquivQuantity Decimal?  @map("each_equiv_quantity") @db.Decimal(12, 4)
+  eachEquivUnit     UnitType? @map("each_equiv_unit")
   commonlyUsed   Boolean @default(false) @map("commonly_used")
   isActive       Boolean @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
