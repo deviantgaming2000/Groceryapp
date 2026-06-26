@@ -166,6 +166,9 @@ function isJunkFlyerItem(item: any): boolean {
   if (/^(pharmacy|snap|ebt|wic|weekly ad|coupons?|deals?|grocery|sale|clearance|new|featured)$/i.test(name)) return true;
   // App-promo blurbs.
   if (/\b(download the app|on the app|deals section|app[- ]exclusive)\b/i.test(name)) return true;
+  // Social-media share tiles.
+  if (/^(pinterest|facebook|instagram|twitter|x|tiktok|youtube|snapchat|whatsapp|reddit|linkedin|threads|follow us)$/i.test(name)) return true;
+  if (/\b(follow us on|find us on|share (this|on)|social media)\b/i.test(name)) return true;
   // Layout / placeholder codes (no spaces): EN-style ids, banner/logo names,
   // or underscore-joined uppercase+digit codes like "ACDSP_COVER-BANNER_810_ENG-1".
   const noSpace = !/\s/.test(name);
@@ -216,11 +219,22 @@ export async function fetchFlyerItems(flyerId: number | string, zip: string, mer
   const json = await flippGet(`${BASE}/flyers/${encodeURIComponent(String(flyerId))}?locale=en-us&postal_code=${encodeURIComponent(zip)}`);
   const items: any[] = json?.items ?? [];
   // Keep real products (price or image), dropping section labels and layout/CTA tiles.
-  const deals = items
+  const mapped = items
     .filter((i) => i?.name && !isJunkFlyerItem(i) && (i.price || i.cutout_image_url || i.clipping_image_url))
     .map((i) => normalizeFlyerItem(i, zip, merchant))
-    // Priced items first, then image-only ones.
+    // Priced items first, so dedup keeps a priced copy when one exists.
     .sort((a, b) => Number(b.salePrice != null) - Number(a.salePrice != null));
+
+  // Flyers often repeat the same product across placements (e.g. pool salt listed 5×).
+  // Collapse to one entry per product (by normalized name + brand).
+  const normName = (s: string) => s.toLowerCase().replace(/[®™*]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const seen = new Set<string>();
+  const deals = mapped.filter((d) => {
+    const dedupeKey = `${normName(d.productName)}|${(d.brand ?? "").toLowerCase()}`;
+    if (seen.has(dedupeKey)) return false;
+    seen.add(dedupeKey);
+    return true;
+  });
   flyerItemsCache.set(key, { at: Date.now(), deals });
   return deals;
 }
