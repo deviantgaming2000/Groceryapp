@@ -463,6 +463,19 @@ async function upsertItem(userId: string, product: NormalizedProduct) {
   });
 }
 
+/** Derive the package size for a price entry. For weight items where the store gives
+ *  a per-unit price, the true package weight is price ÷ unit price — accurate even when
+ *  the size string is a range (e.g. "12.3 - 28 lb") so the $/lb matches the store. */
+function derivePackage(product: NormalizedProduct): { quantity: number; unit: UnitType } {
+  const sized = parseSize(product.size);
+  const isWeight = sized.unit === "lb" || sized.unit === "oz";
+  if (isWeight && product.unitPrice && product.unitPrice > 0 && product.price && product.price > 0) {
+    const qty = product.price / product.unitPrice;
+    if (Number.isFinite(qty) && qty > 0) return { quantity: Number(qty.toFixed(2)), unit: sized.unit };
+  }
+  return sized;
+}
+
 async function upsertPrice(
   userId: string,
   groceryItemId: string,
@@ -500,7 +513,7 @@ async function upsertPrice(
   }
   // On first import, derive package size from the product and keep the full
   // product description in notes so it stays visible on the price entry.
-  const sized = parseSize(product.size);
+  const sized = derivePackage(product);
   return prisma.priceEntry.create({
     data: {
       userId,
