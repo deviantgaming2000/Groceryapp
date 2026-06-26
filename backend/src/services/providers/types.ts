@@ -41,6 +41,9 @@ export interface NormalizedProduct {
   unitPrice: number | null;
   currency: string;
   available: boolean;
+  // Local-store fulfillment (providers that can tell shelf stock from online-only).
+  localInStock?: boolean | null; // on the local store's shelf (pickup/same-day delivery)
+  fulfillmentType?: "store" | "warehouse" | "marketplace" | null;
   couponEligible: boolean;
   couponData: NormalizedCoupon | null;
   lastUpdated: string;

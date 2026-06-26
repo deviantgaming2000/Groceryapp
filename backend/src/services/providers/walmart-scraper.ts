@@ -93,6 +93,12 @@ interface ScrapedItem {
   unitPriceUom?: string | null;
   unitPriceText?: string | null;
   size?: string | null;
+  // Local-store fulfillment fields (may be absent for older responses)
+  availability?: string | null; // "in_stock" | "out_of_stock"
+  fulfillmentType?: "store" | "warehouse" | "marketplace" | null;
+  pickupAvailable?: boolean | null;
+  deliveryAvailable?: boolean | null;
+  localInStock?: boolean | null;
 }
 interface SearchResponse {
   results?: ScrapedItem[];
@@ -182,6 +188,9 @@ function normalize(item: ScrapedItem, locationId?: string): NormalizedProduct {
     unitPrice,
     currency: item.currency || "USD",
     available: item.inStock !== false,
+    // Prefer the scraper's local-shelf signal; fall back to the online in-stock flag.
+    localInStock: item.localInStock ?? (item.inStock !== false ? null : false),
+    fulfillmentType: item.fulfillmentType ?? null,
     couponEligible: false,
     couponData: null,
     lastUpdated: item.scrapedAt || new Date().toISOString(),
