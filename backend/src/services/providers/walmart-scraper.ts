@@ -88,6 +88,11 @@ interface ScrapedItem {
   url: string | null;
   inStock: boolean | null;
   scrapedAt?: string;
+  // Authoritative unit-price fields from the scraper (may be absent for older responses)
+  unitPrice?: number | null;
+  unitPriceUom?: string | null;
+  unitPriceText?: string | null;
+  size?: string | null;
 }
 interface SearchResponse {
   results?: ScrapedItem[];
@@ -145,17 +150,27 @@ function idFromUrl(url: string | null, name: string): string {
 
 function normalize(item: ScrapedItem, locationId?: string): NormalizedProduct {
   const storeId = locationId && locationId !== ONLINE_STORE_ID ? locationId : ONLINE_STORE_ID;
-  // Recover size/weight from the title so the import compares on the right unit.
-  const sized = extractSize(item.name);
   const price = item.price ?? null;
-  // Estimate a per-unit price when we know the package quantity (e.g. $/lb).
-  const unitPrice = price != null && sized && sized.quantity > 0 ? Number((price / sized.quantity).toFixed(4)) : null;
+
+  // Prefer authoritative fields from scraper; fall back to title parsing.
+  let unitPrice = item.unitPrice ?? null;
+  let size = item.size ?? null;
+  if (unitPrice == null || size == null) {
+    const sized = extractSize(item.name);
+    if (sized) {
+      if (unitPrice == null && price != null && sized.quantity > 0) {
+        unitPrice = Number((price / sized.quantity).toFixed(4));
+      }
+      if (size == null) size = sized.size;
+    }
+  }
+
   return {
     source: SOURCE,
     externalProductId: idFromUrl(item.url, item.name),
     title: item.name,
     brand: undefined,
-    size: sized?.size,
+    size: size ?? undefined,
     category: undefined,
     imageUrl: undefined,
     productUrl: item.url ?? undefined,
