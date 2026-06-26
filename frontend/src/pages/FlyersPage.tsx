@@ -46,6 +46,7 @@ export function FlyersPage() {
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [reading, setReading] = useState<Record<string, boolean>>({});
   const [visionOn, setVisionOn] = useState(false);
+  const [batch, setBatch] = useState<{ running: boolean; done: number; total: number }>({ running: false, done: 0, total: 0 });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -71,6 +72,35 @@ export function FlyersPage() {
     } finally {
       setReading((r) => ({ ...r, [key]: false }));
     }
+  }
+
+  // Batch-read every image-only item in the flyer, sequentially with a short
+  // delay so the local model isn't hammered.
+  async function readAllUnpriced() {
+    const targets = items.map((d, i) => ({ d, i })).filter(({ d }) => d.salePrice == null && d.imageUrl);
+    if (!targets.length) return;
+    setError("");
+    setMessage("");
+    setBatch({ running: true, done: 0, total: targets.length });
+    let done = 0;
+    let found = 0;
+    for (const { d, i } of targets) {
+      try {
+        const res = await api<{ price: number | null; dealText: string | null }>("/api/deals/read-image", {
+          method: "POST",
+          body: JSON.stringify({ imageUrl: d.imageUrl, productName: d.productName })
+        });
+        if (res.price != null || res.dealText) found++;
+        setItems((list) => list.map((x, idx) => idx === i ? { ...x, salePrice: res.price ?? x.salePrice, dealText: res.dealText ?? x.dealText } : x));
+      } catch (err) {
+        setError((e) => e || (err instanceof Error ? err.message : "A read failed"));
+      }
+      done++;
+      setBatch({ running: true, done, total: targets.length });
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    setBatch({ running: false, done, total: targets.length });
+    setMessage(`Read ${done} image${done === 1 ? "" : "s"} — found a price or deal on ${found}.`);
   }
 
   async function loadFlyers(event?: FormEvent<HTMLFormElement>) {
@@ -140,6 +170,7 @@ export function FlyersPage() {
     const t = filter.trim().toLowerCase();
     return !t || `${d.productName} ${d.brand ?? ""} ${d.dealText ?? ""}`.toLowerCase().includes(t);
   });
+  const unpricedCount = items.filter((d) => d.salePrice == null && d.imageUrl).length;
 
   return (
     <section>
@@ -192,6 +223,11 @@ export function FlyersPage() {
                 <span>Filter items</span>
                 <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="milk, chicken, soda…" />
               </label>
+            )}
+            {visionOn && unpricedCount > 0 && (
+              <button type="button" className="secondary" disabled={batch.running} onClick={readAllUnpriced}>
+                {batch.running ? `Reading ${batch.done}/${batch.total}…` : `🔍 Read all unpriced (${unpricedCount})`}
+              </button>
             )}
           </div>
 
