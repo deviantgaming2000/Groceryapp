@@ -18,6 +18,8 @@ export function ItemsPage() {
   const [weightItem, setWeightItem] = useState<any | null>(null);
   const [weightQty, setWeightQty] = useState("");
   const [weightUnit, setWeightUnit] = useState("lb");
+  const [minQty, setMinQty] = useState("");
+  const [minUnit, setMinUnit] = useState("lb");
   const [savingWeight, setSavingWeight] = useState(false);
   const load = () => api<any[]>("/api/items").then(setItems);
   useEffect(() => { void load(); }, []);
@@ -26,6 +28,8 @@ export function ItemsPage() {
     setWeightItem(item);
     setWeightQty(item.eachEquivQuantity != null ? String(item.eachEquivQuantity) : "");
     setWeightUnit(item.eachEquivUnit ?? "lb");
+    setMinQty(item.minPurchaseQuantity != null ? String(item.minPurchaseQuantity) : "");
+    setMinUnit(item.minPurchaseUnit ?? "lb");
     setError("");
   }
 
@@ -34,16 +38,22 @@ export function ItemsPage() {
     setSavingWeight(true);
     setError("");
     try {
-      const qty = weightQty.trim() ? Number(weightQty) : null;
+      const eqQty = weightQty.trim() ? Number(weightQty) : null;
+      const mnQty = minQty.trim() ? Number(minQty) : null;
       await api(`/api/items/${weightItem.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ eachEquivQuantity: qty, eachEquivUnit: qty ? weightUnit : null })
+        body: JSON.stringify({
+          eachEquivQuantity: eqQty,
+          eachEquivUnit: eqQty ? weightUnit : null,
+          minPurchaseQuantity: mnQty,
+          minPurchaseUnit: mnQty ? minUnit : null
+        })
       });
-      setWarning(qty ? `Set 1 each of "${weightItem.name}" ≈ ${qty} ${weightUnit}.` : `Cleared per-each weight for "${weightItem.name}".`);
+      setWarning(`Saved sizing for "${weightItem.name}".`);
       setWeightItem(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save per-each weight");
+      setError(err instanceof Error ? err.message : "Could not save sizing");
     } finally {
       setSavingWeight(false);
     }
@@ -108,7 +118,7 @@ export function ItemsPage() {
             <td><SourceBadge source={item.source} /></td>
             <td>{String(item.isActive)}</td>
             <td className="action-row">
-              <button className="secondary" type="button" onClick={() => openWeight(item)}>⚖ Per-each</button>
+              <button className="secondary" type="button" onClick={() => openWeight(item)}>⚖ Sizing</button>
               <button className="secondary" type="button" onClick={() => { setMergeSource(item); setMergeTargetId(""); }}>Merge into…</button>
             </td>
           </tr>
@@ -118,11 +128,13 @@ export function ItemsPage() {
       {weightItem && (
         <div className="modal-backdrop" onClick={() => !savingWeight && setWeightItem(null)}>
           <div className="modal-card panel" onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginTop: 0 }}>Approx weight per each</h2>
-            <p style={{ margin: "0 0 14px", fontSize: 14 }}>
-              Set how much one <strong style={{ color: "var(--ink)" }}>{weightItem.name}</strong> weighs, so prices sold "each" can be compared against per-pound/ounce prices. E.g. 1 apple ≈ 0.4 lb. Leave blank to clear.
+            <h2 style={{ marginTop: 0 }}>Sizing · {weightItem.name}</h2>
+
+            <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 600 }}>Approx weight per each</p>
+            <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--ink-soft)" }}>
+              How much one weighs, so prices sold "each" compare against per-pound/ounce prices (e.g. 1 apple ≈ 0.4 lb). Leave blank to clear.
             </p>
-            <div className="toolbar" style={{ margin: 0 }}>
+            <div className="toolbar" style={{ margin: "0 0 18px" }}>
               <label className="field" style={{ minWidth: 120 }}>
                 <span>1 each ≈</span>
                 <input type="number" step="0.01" value={weightQty} onChange={(e) => setWeightQty(e.target.value)} placeholder="0.4" />
@@ -132,7 +144,23 @@ export function ItemsPage() {
                 <select value={weightUnit} onChange={(e) => setWeightUnit(e.target.value)}>{units.map((u) => <option key={u} value={u}>{u}</option>)}</select>
               </label>
             </div>
-            <div className="action-row" style={{ marginTop: 16 }}>
+
+            <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 600 }}>Minimum purchase (whole cuts)</p>
+            <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--ink-soft)" }}>
+              For items sold only as a whole piece by weight (e.g. brisket ~6 lb). Comparisons will cost the whole cut, not a per-pound sliver. Leave blank if it's sold by any amount.
+            </p>
+            <div className="toolbar" style={{ margin: 0 }}>
+              <label className="field" style={{ minWidth: 120 }}>
+                <span>Sold in min. of</span>
+                <input type="number" step="0.01" value={minQty} onChange={(e) => setMinQty(e.target.value)} placeholder="6" />
+              </label>
+              <label className="field" style={{ minWidth: 100 }}>
+                <span>Unit</span>
+                <select value={minUnit} onChange={(e) => setMinUnit(e.target.value)}>{units.map((u) => <option key={u} value={u}>{u}</option>)}</select>
+              </label>
+            </div>
+
+            <div className="action-row" style={{ marginTop: 18 }}>
               <button type="button" onClick={saveWeight} disabled={savingWeight}>{savingWeight ? "Saving…" : "Save"}</button>
               <button type="button" className="secondary" onClick={() => setWeightItem(null)} disabled={savingWeight}>Cancel</button>
             </div>

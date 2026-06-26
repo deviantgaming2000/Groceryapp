@@ -12,6 +12,8 @@ const itemSchema = z.object({
   upc: z.string().optional().nullable(),
   eachEquivQuantity: z.coerce.number().positive().optional().nullable(),
   eachEquivUnit: z.enum(["each", "lb", "oz", "gallon", "quart", "pint", "fl_oz", "pack", "case", "count"]).optional().nullable(),
+  minPurchaseQuantity: z.coerce.number().positive().optional().nullable(),
+  minPurchaseUnit: z.enum(["each", "lb", "oz", "gallon", "quart", "pint", "fl_oz", "pack", "case", "count"]).optional().nullable(),
   commonlyUsed: z.boolean().optional(),
   isActive: z.boolean().optional()
 });

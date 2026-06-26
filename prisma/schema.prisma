@@ -107,6 +107,11 @@ model GroceryItem {
   // against weight/volume prices (e.g. 1 apple ≈ 0.4 lb).
   eachEquivQuantity Decimal?  @map("each_equiv_quantity") @db.Decimal(12, 4)
   eachEquivUnit     UnitType? @map("each_equiv_unit")
+  // Optional minimum purchase size for items sold as whole pieces by weight
+  // (e.g. brisket ~6 lb) so comparisons reflect the real cost of the whole cut,
+  // not a per-pound sliver.
+  minPurchaseQuantity Decimal?  @map("min_purchase_quantity") @db.Decimal(12, 4)
+  minPurchaseUnit     UnitType? @map("min_purchase_unit")
   commonlyUsed   Boolean @default(false) @map("commonly_used")
   isActive       Boolean @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")

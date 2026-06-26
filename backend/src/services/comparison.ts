@@ -12,7 +12,7 @@ export type CompareInput = {
       id: string;
       quantityNeeded: number;
       unitType: UnitType;
-      groceryItem: { id: string; name: string; category: string; quantityNeeded?: number; unitType?: UnitType; eachEquivQuantity?: number | null; eachEquivUnit?: UnitType | null };
+      groceryItem: { id: string; name: string; category: string; quantityNeeded?: number; unitType?: UnitType; eachEquivQuantity?: number | null; eachEquivUnit?: UnitType | null; minPurchaseQuantity?: number | null; minPurchaseUnit?: UnitType | null };
     }>;
   };
   stores: Array<{ id: string; name: string; membershipRequired?: boolean }>;
@@ -220,9 +220,32 @@ export function compareGroceryList(input: CompareInput) {
           };
         }
       }
-      const pkg = usingPackageEach
+      let pkg = usingPackageEach
         ? onePackagePerEach(neededQuantity, pkgQuantity, pkgUnit)
         : packagesNeeded(neededQuantity, neededUnit, pkgQuantity, pkgUnit)!;
+
+      // Whole-cut minimum: items sold as one piece by weight (e.g. brisket ~6 lb)
+      // can't be bought in slivers. Buy at least the minimum cut, so the total is
+      // realistic (and the surplus shows as leftover).
+      const minQty = listItem.groceryItem.minPurchaseQuantity;
+      const minUnit = listItem.groceryItem.minPurchaseUnit ?? undefined;
+      if (minQty && minUnit && unitsCompatible(minUnit, pkgUnit)) {
+        const minBase = normalizeQuantity(minQty, minUnit);
+        const soldBase = normalizeQuantity(pkgQuantity, pkgUnit);
+        const minPackages = Math.max(1, Math.ceil(minBase.quantity / soldBase.quantity));
+        if (pkg.packageCount < minPackages) {
+          const purchased = minPackages * soldBase.quantity;
+          pkg = {
+            packageCount: minPackages,
+            purchasedQuantity: purchased,
+            consumedQuantity: pkg.consumedQuantity,
+            leftoverQuantity: Math.max(0, purchased - pkg.consumedQuantity),
+            baseUnit: pkg.baseUnit
+          };
+          warnings.push(`Sold as ~${minQty} ${minUnit} minimum — costing the whole cut.`);
+        }
+      }
+
       const checkoutPrice = entry.price * pkg.packageCount;
       const consumedRatio = pkg.consumedQuantity / pkg.purchasedQuantity;
       const consumedValue = checkoutPrice * consumedRatio;
