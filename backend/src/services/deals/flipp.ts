@@ -152,6 +152,31 @@ export async function fetchFlyers(zip: string): Promise<FlippFlyer[]> {
   return flyers;
 }
 
+// Flipp flyers include non-product layout tiles — logo blocks, "Shop Now" buttons,
+// and items whose "name" is an internal placeholder code (e.g. "3900EN-og0tT7qa1TwUG").
+// These aren't deals, so drop them.
+function isJunkFlyerItem(item: any): boolean {
+  const name = String(item?.name ?? "").trim();
+  if (!name) return true;
+  // No letters at all (pure codes/numbers) isn't a product.
+  if (!/[A-Za-z]/.test(name)) return true;
+  // Pure calls-to-action / layout labels.
+  if (/^(shop now|see (the )?(ad|store|details)|view (ad|all|more)|learn more|details?|online only)$/i.test(name)) return true;
+  // Common non-product section labels (exact match only, so real products are safe).
+  if (/^(pharmacy|snap|ebt|wic|weekly ad|coupons?|deals?|grocery|sale|clearance|new|featured)$/i.test(name)) return true;
+  // App-promo blurbs.
+  if (/\b(download the app|on the app|deals section|app[- ]exclusive)\b/i.test(name)) return true;
+  // Layout / placeholder codes (no spaces): EN-style ids, banner/logo names,
+  // or underscore-joined uppercase+digit codes like "ACDSP_COVER-BANNER_810_ENG-1".
+  const noSpace = !/\s/.test(name);
+  if (noSpace) {
+    if (/^\d+[A-Za-z]{2}-[A-Za-z0-9]{5,}$/.test(name)) return true;
+    if (/cover|banner|header|footer|logo|placeholder|spacer|filler/i.test(name)) return true;
+    if (/_/.test(name) && /[A-Z]/.test(name) && /\d/.test(name)) return true;
+  }
+  return false;
+}
+
 function normalizeFlyerItem(item: any, zip: string, merchant?: string): NormalizedDeal {
   const sale = num(item.price);
   const dealText = (typeof item.sale_story === "string" && item.sale_story.trim())
@@ -190,9 +215,9 @@ export async function fetchFlyerItems(flyerId: number | string, zip: string, mer
   if (hit && Date.now() - hit.at < TTL_MS) return hit.deals;
   const json = await flippGet(`${BASE}/flyers/${encodeURIComponent(String(flyerId))}?locale=en-us&postal_code=${encodeURIComponent(zip)}`);
   const items: any[] = json?.items ?? [];
-  // Keep items that carry a price or an image (drops bare section labels like "Pharmacy").
+  // Keep real products (price or image), dropping section labels and layout/CTA tiles.
   const deals = items
-    .filter((i) => i?.name && (i.price || i.cutout_image_url || i.clipping_image_url))
+    .filter((i) => i?.name && !isJunkFlyerItem(i) && (i.price || i.cutout_image_url || i.clipping_image_url))
     .map((i) => normalizeFlyerItem(i, zip, merchant))
     // Priced items first, then image-only ones.
     .sort((a, b) => Number(b.salePrice != null) - Number(a.salePrice != null));
