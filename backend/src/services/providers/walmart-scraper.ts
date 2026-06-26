@@ -251,11 +251,19 @@ export const walmartScraperProvider: GroceryProvider = {
   async searchProducts(params: ProductSearchParams) {
     if (!params.term) throw new ProviderError("Enter a search term.", "bad_request", 400);
     const limit = params.limit ?? 15;
-    const qs = new URLSearchParams({ query: params.term, store: "walmart", limit: String(limit) });
+    // Over-fetch so the page still fills after dropping items not stocked locally.
+    const fetchLimit = Math.min(limit * 2, 40);
+    const qs = new URLSearchParams({ query: params.term, store: "walmart", limit: String(fetchLimit) });
     if (params.locationId && params.locationId !== ONLINE_STORE_ID) qs.set("storeId", params.locationId);
 
     const data = await scraperFetch<SearchResponse>(`/search?${qs.toString()}`);
-    const products = (data.results ?? []).slice(0, limit).map((item) => normalize(item, params.locationId));
+    const products = (data.results ?? [])
+      .map((item) => normalize(item, params.locationId))
+      // Only list things actually available at the selected store (pickup/delivery).
+      // localInStock === false drops out-of-stock / warehouse-only / marketplace items;
+      // unknown (older scraper) is kept.
+      .filter((p) => p.localInStock !== false)
+      .slice(0, limit);
     products.forEach(remember);
     return products;
   },
