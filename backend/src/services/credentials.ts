@@ -57,15 +57,16 @@ export const CREDENTIAL_SPECS: CredentialSpec[] = [
   },
   {
     provider: "ollama-vision",
-    label: "Local Vision OCR (Ollama)",
+    label: "Local Vision OCR (Ollama / MLX)",
     description:
-      "Optional. Reads prices and deals off flyer clipping images using a local Ollama vision model (e.g. running on your Mac). Nothing leaves your network. Pull a model first: `ollama pull llama3.2-vision`.",
+      "Optional. Reads prices and deals off flyer clipping images with a local vision model — nothing leaves your network. Works with Ollama or any OpenAI-compatible server (LM Studio, FastMLX, mlx-vlm). API style auto-detects from the URL; set it explicitly if needed.",
     docsUrl: "https://ollama.com/search?c=vision",
     fields: [
-      { key: "baseUrl", label: "Ollama URL", secret: false, placeholder: "http://192.168.1.50:11434" },
-      { key: "model", label: "Vision model", secret: false, placeholder: "llama3.2-vision" }
+      { key: "baseUrl", label: "Server URL", secret: false, placeholder: "http://192.168.1.50:11434 (Ollama) or http://192.168.1.50:1234/v1 (LM Studio)" },
+      { key: "model", label: "Vision model", secret: false, placeholder: "llama3.2-vision or mlx-community/Qwen2.5-VL-7B-Instruct-4bit" },
+      { key: "apiStyle", label: "API style (auto / ollama / openai)", secret: false, placeholder: "auto" }
     ],
-    envMap: { baseUrl: "OLLAMA_URL", model: "OLLAMA_VISION_MODEL" }
+    envMap: { baseUrl: "OLLAMA_URL", model: "OLLAMA_VISION_MODEL", apiStyle: "VISION_API_STYLE" }
   }
 ];
 
