@@ -300,6 +300,16 @@ export function FindProductsPage() {
   const visibleResults = localOnly ? results.filter((p) => p.localInStock !== false) : results;
   const hiddenCount = results.length - visibleResults.length;
 
+  // Diagnostic: how much fulfillment data the scraper actually returned this search.
+  const fStats = {
+    total: results.length,
+    withData: results.filter((p) => p.fulfillmentType != null).length,
+    local: results.filter((p) => p.fulfillmentType === "store").length,
+    ship: results.filter((p) => p.fulfillmentType === "warehouse").length,
+    marketplace: results.filter((p) => p.fulfillmentType === "marketplace").length
+  };
+  const fMissing = fStats.total - fStats.withData;
+
   return (
     <section>
       <div className="page-head">
@@ -481,6 +491,11 @@ export function FindProductsPage() {
             <span>Local stock only <span style={{ color: "var(--ink-soft)" }}>(hide ship-only warehouse &amp; marketplace listings)</span></span>
           </label>
           {localOnly && hiddenCount > 0 && <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>{hiddenCount} hidden</span>}
+          <span style={{ flexBasis: "100%", fontSize: 12.5, color: "var(--ink-soft)" }}>
+            Scraper fulfillment data: <strong style={{ color: "var(--ink)" }}>{fStats.withData}/{fStats.total}</strong> tagged
+            {" · "}{fStats.local} local · {fStats.ship} ship · {fStats.marketplace} marketplace
+            {fMissing > 0 && <span style={{ color: "var(--warn)" }}> · {fMissing} missing (kept by default)</span>}
+          </span>
         </div>
       )}
 
