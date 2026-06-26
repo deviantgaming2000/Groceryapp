@@ -106,6 +106,34 @@ function remember(product: NormalizedProduct) {
   }
 }
 
+/** Pull a size/weight out of a Walmart product title so produce sold by weight
+ *  ("Fresh Gala Apples, 3 lb Bag") imports as lb/oz instead of defaulting to "each".
+ *  Returns a string the shared parseSize() understands, plus the parsed quantity. */
+function extractSize(name: string): { size: string; quantity: number } | undefined {
+  if (!name) return undefined;
+  const s = name.toLowerCase();
+  // Ordered so compound units (fl oz) win before their substrings (oz).
+  const patterns: Array<[RegExp, string]> = [
+    [/(\d+(?:\.\d+)?)\s*(?:fl\.?\s*oz|fluid\s*ounces?)/, "fl_oz"],
+    [/(\d+(?:\.\d+)?)\s*(?:gallons?|gal)\b/, "gallon"],
+    [/(\d+(?:\.\d+)?)\s*(?:quarts?|qt)\b/, "quart"],
+    [/(\d+(?:\.\d+)?)\s*(?:pints?|pt)\b/, "pint"],
+    [/(\d+(?:\.\d+)?)\s*(?:ounces?|oz)\b/, "oz"],
+    [/(\d+(?:\.\d+)?)\s*(?:pounds?|lbs?)\b/, "lb"],
+    [/(\d+(?:\.\d+)?)\s*(?:counts?|ct|packs?|pk|pieces?)\b/, "count"]
+  ];
+  for (const [re, unit] of patterns) {
+    const m = s.match(re);
+    if (m) {
+      const qty = parseFloat(m[1]);
+      if (Number.isFinite(qty) && qty > 0) return { size: `${qty} ${unit}`, quantity: qty };
+    }
+  }
+  if (/\bdozen\b/.test(s)) return { size: "12 count", quantity: 12 };
+  if (/(^|[,\s])each\b|\bper\s*each\b|\bsold\s*by\s*each\b/.test(s)) return { size: "1 each", quantity: 1 };
+  return undefined;
+}
+
 /** Derive a stable product id from the Walmart /ip/<slug>/<id> URL, with a name fallback. */
 function idFromUrl(url: string | null, name: string): string {
   if (url) {
@@ -117,21 +145,26 @@ function idFromUrl(url: string | null, name: string): string {
 
 function normalize(item: ScrapedItem, locationId?: string): NormalizedProduct {
   const storeId = locationId && locationId !== ONLINE_STORE_ID ? locationId : ONLINE_STORE_ID;
+  // Recover size/weight from the title so the import compares on the right unit.
+  const sized = extractSize(item.name);
+  const price = item.price ?? null;
+  // Estimate a per-unit price when we know the package quantity (e.g. $/lb).
+  const unitPrice = price != null && sized && sized.quantity > 0 ? Number((price / sized.quantity).toFixed(4)) : null;
   return {
     source: SOURCE,
     externalProductId: idFromUrl(item.url, item.name),
     title: item.name,
     brand: undefined,
-    size: undefined,
+    size: sized?.size,
     category: undefined,
     imageUrl: undefined,
     productUrl: item.url ?? undefined,
     storeId,
     storeName: storeId === ONLINE_STORE_ID ? ONLINE_STORE.name : `Walmart #${storeId}`,
-    price: item.price ?? null,
-    regularPrice: item.price ?? null,
+    price,
+    regularPrice: price,
     promoPrice: null,
-    unitPrice: null,
+    unitPrice,
     currency: item.currency || "USD",
     available: item.inStock !== false,
     couponEligible: false,
