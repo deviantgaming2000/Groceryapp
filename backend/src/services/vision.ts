@@ -49,6 +49,19 @@ const PROMPT_TAIL =
   `{"price": <the per-item sale price in dollars as a number, or null>, ` +
   `"deal": "<short deal text like '2 for $5' or 'Buy 1 Get 1 Free', or null>"}.`;
 
+// Guard against obviously-wrong reads so they don't poison comparisons:
+//  - implausible numbers (SKU/UPC/phone misread as a price)
+//  - a "price" on a promo offer (BOGO / "$X off" / "save") — that number is the
+//    discount or a misread, not a sale price.
+function sanitizeResult(r: ReadDealResult): ReadDealResult {
+  let price = r.price;
+  if (price != null && (price <= 0 || price > 999)) price = null;
+  if (price != null && r.dealText && /\b(free|bogo|buy\s*\d+\s*get|save|\$?\d[\d.]*\s*(off|back))\b/i.test(r.dealText)) {
+    price = null;
+  }
+  return { ...r, price };
+}
+
 function parseModelText(text: string): ReadDealResult {
   const trimmed = (text || "").trim();
   try {
@@ -121,7 +134,7 @@ export async function readDealFromImage(imageUrl: string, productName?: string):
       max_tokens: 300,
       response_format: { type: "json_object" }
     }, cfg.apiKey);
-    return parseModelText(json?.choices?.[0]?.message?.content ?? "");
+    return sanitizeResult(parseModelText(json?.choices?.[0]?.message?.content ?? ""));
   }
 
   // Ollama native.
@@ -133,5 +146,5 @@ export async function readDealFromImage(imageUrl: string, productName?: string):
     format: "json",
     options: { temperature: 0 }
   });
-  return parseModelText(json?.response ?? "");
+  return sanitizeResult(parseModelText(json?.response ?? ""));
 }
