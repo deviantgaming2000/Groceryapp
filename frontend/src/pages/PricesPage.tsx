@@ -84,10 +84,19 @@ export function PricesPage() {
       groups.set(key, existing);
     }
     return [...groups.values()]
-      .map((group) => ({
-        ...group,
-        prices: group.prices.sort((a, b) => a.store?.name.localeCompare(b.store?.name) || Number(a.price) - Number(b.price))
-      }))
+      .map((group) => {
+        const sorted = group.prices.sort((a, b) => a.store?.name.localeCompare(b.store?.name) || Number(a.price) - Number(b.price));
+        // Collapse to the latest entry per store+source for display; older entries
+        // stay in `prices` (history chart) but don't clutter the list.
+        const latestMap = new Map<string, any>();
+        for (const p of sorted) {
+          const key = `${p.storeId}|${p.source ?? "manual"}`;
+          const cur = latestMap.get(key);
+          if (!cur || new Date(p.recordedAt).getTime() > new Date(cur.recordedAt).getTime()) latestMap.set(key, p);
+        }
+        const latest = [...latestMap.values()].sort((a, b) => (a.store?.name ?? "").localeCompare(b.store?.name ?? ""));
+        return { ...group, prices: sorted, latest };
+      })
       .sort((a, b) => `${a.item?.category ?? ""} ${a.item?.name ?? ""}`.localeCompare(`${b.item?.category ?? ""} ${b.item?.name ?? ""}`));
   }, [prices, search, storeFilter]);
 
@@ -275,11 +284,11 @@ export function PricesPage() {
           <Fragment key={group.item?.id ?? "unknown-item"}>
             <tr key={`${group.item?.id}-group`} className="group-row"><td colSpan={9}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                <div>{group.item?.name ?? "Unknown item"}<small>{group.item?.category ?? "Uncategorized"} · comparing as {group.item?.unitType ?? "entered"} · {group.prices.length} saved {group.prices.length === 1 ? "price" : "prices"}</small></div>
+                <div>{group.item?.name ?? "Unknown item"}<small>{group.item?.category ?? "Uncategorized"} · comparing as {group.item?.unitType ?? "entered"} · {group.latest.length} current {group.latest.length === 1 ? "price" : "prices"}{group.prices.length > group.latest.length ? ` · ${group.prices.length} in history` : ""}</small></div>
                 <button type="button" className="secondary" style={{ padding: "5px 11px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => setHistoryGroup(group)}>📈 History</button>
               </div>
             </td></tr>
-            {group.prices.map((price) => editingPriceId === price.id ? (
+            {group.latest.map((price) => editingPriceId === price.id ? (
               <tr key={price.id}>
                 <td colSpan={9}>
                   <form className="inline-edit" onSubmit={(event) => updatePrice(event, price.id)}>
