@@ -8,15 +8,35 @@ export function SettingsPage() {
   const [distances, setDistances] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState("");
+  const [dataSummary, setDataSummary] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const loadSummary = () => api<any>("/api/data/summary").then(setDataSummary).catch(() => {});
   const load = () => Promise.all([api<any>("/api/settings"), api<any[]>("/api/distances"), api<any[]>("/api/stores")]).then(([s, d, stores]) => {
     setSettings(s);
     setDistances(d);
     setStores(stores);
     if (!selectedStoreId && stores[0]) setSelectedStoreId(stores[0].id);
   });
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); void loadSummary(); }, []);
+
+  async function dataAction(path: string, confirmMsg: string, body?: Record<string, unknown>) {
+    if (!confirm(confirmMsg)) return;
+    setError("");
+    setMessage("");
+    setBusy(true);
+    try {
+      const res = await api<any>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+      const [, count] = Object.entries(res)[0] ?? ["", 0];
+      setMessage(`Done — ${count} price ${Number(count) === 1 ? "entry" : "entries"} affected.`);
+      await Promise.all([load(), loadSummary()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,6 +83,45 @@ export function SettingsPage() {
   return (
     <section>
       <h1>Settings</h1>
+
+      <h2>Data Management</h2>
+      <div className="panel">
+        {!dataSummary ? <p style={{ margin: 0 }}>Loading data summary…</p> : (
+          <>
+            <div className="dashboard-grid" style={{ marginBottom: 12 }}>
+              <article><strong>Prices</strong><p style={{ margin: "4px 0 0", fontSize: 13 }}>{dataSummary.prices.active} active · {dataSummary.prices.inactive} hidden</p></article>
+              <article><strong>Items</strong><p style={{ margin: "4px 0 0", fontSize: 13 }}>{dataSummary.items.active} active · {dataSummary.items.inactive} hidden</p></article>
+              <article><strong>Coupons</strong><p style={{ margin: "4px 0 0", fontSize: 13 }}>{dataSummary.coupons.active} active · {dataSummary.coupons.inactive} hidden</p></article>
+              <article><strong>Stores / Lists</strong><p style={{ margin: "4px 0 0", fontSize: 13 }}>{dataSummary.stores} stores · {dataSummary.lists} lists</p></article>
+            </div>
+
+            <table><thead><tr><th>Store</th><th>Active prices</th><th>Hidden prices</th></tr></thead><tbody>
+              {dataSummary.perStore.map((s: any) => (
+                <tr key={s.id}>
+                  <td>{s.name}{!s.storeActive && <span className="source-badge stale" style={{ marginLeft: 6 }}>store hidden</span>}</td>
+                  <td>{s.pricesActive}</td>
+                  <td>{s.pricesInactive}</td>
+                </tr>
+              ))}
+            </tbody></table>
+
+            <div className="action-row" style={{ marginTop: 12, flexWrap: "wrap" }}>
+              <button type="button" disabled={busy || dataSummary.prices.inactive === 0}
+                onClick={() => dataAction("/api/data/prices/reactivate", `Reactivate all ${dataSummary.prices.inactive} hidden price entries so they show in comparisons?`)}>
+                Restore {dataSummary.prices.inactive} hidden prices
+              </button>
+              <button type="button" className="danger" disabled={busy || dataSummary.prices.inactive === 0}
+                onClick={() => dataAction("/api/data/prices/purge-inactive", `Permanently DELETE all ${dataSummary.prices.inactive} hidden price entries? This cannot be undone.`)}>
+                Purge {dataSummary.prices.inactive} hidden prices
+              </button>
+            </div>
+            <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 8 }}>
+              "Hidden" prices are soft-deleted — kept in the database but excluded from Price Entry and comparisons. Restore brings them back; Purge removes them for good.
+            </p>
+          </>
+        )}
+      </div>
+
       <h2>API Keys &amp; Integrations</h2>
       <ApiKeysPanel />
       <form className="grid-form" onSubmit={save}>
