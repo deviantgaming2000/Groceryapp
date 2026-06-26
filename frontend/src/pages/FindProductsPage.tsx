@@ -74,6 +74,8 @@ interface PProduct {
   unitPrice: number | null;
   available: boolean;
   couponEligible: boolean;
+  localInStock?: boolean | null;
+  fulfillmentType?: "store" | "warehouse" | "marketplace" | null;
 }
 
 export function FindProductsPage() {
@@ -96,6 +98,7 @@ export function FindProductsPage() {
   const [results, setResults] = useState<PProduct[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [localOnly, setLocalOnly] = useState(false);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -146,6 +149,7 @@ export function FindProductsPage() {
     setStatus(null);
     setResults([]);
     setSearched(false);
+    setLocalOnly(false);
     setLocations([]);
     setChangingStore(false);
     setStates([]);
@@ -289,6 +293,12 @@ export function FindProductsPage() {
       setConfirming(false);
     }
   }
+
+  // The self-hosted Walmart scraper tags each result with local-shelf vs ship-only
+  // fulfillment; other providers don't, so the filter only shows when it's meaningful.
+  const hasFulfillment = results.some((p) => p.fulfillmentType != null);
+  const visibleResults = localOnly ? results.filter((p) => p.localInStock !== false) : results;
+  const hiddenCount = results.length - visibleResults.length;
 
   return (
     <section>
@@ -464,9 +474,19 @@ export function FindProductsPage() {
         <div className="panel" style={{ marginTop: 14 }}><p style={{ margin: 0 }}>No products found. Try a different term.</p></div>
       )}
 
+      {!searching && results.length > 0 && hasFulfillment && (
+        <div className="toolbar" style={{ marginTop: 14, alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}>
+            <input type="checkbox" checked={localOnly} onChange={(e) => setLocalOnly(e.target.checked)} />
+            <span>Local stock only <span style={{ color: "var(--ink-soft)" }}>(hide ship-only warehouse &amp; marketplace listings)</span></span>
+          </label>
+          {localOnly && hiddenCount > 0 && <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>{hiddenCount} hidden</span>}
+        </div>
+      )}
+
       {!searching && results.length > 0 && (
         <div className="kroger-grid">
-          {results.map((p) => (
+          {visibleResults.map((p) => (
             <article key={p.externalProductId} className="kroger-card">
               <div className="kroger-thumb">
                 {p.imageUrl ? <img src={p.imageUrl} alt={p.title} loading="lazy" /> : <span>No image</span>}
@@ -489,6 +509,9 @@ export function FindProductsPage() {
                 </div>
                 <div className="kroger-badges">
                   {p.couponEligible && <span className="source-badge promo">Deal</span>}
+                  {p.fulfillmentType === "store" && <span className="source-badge promo">Local</span>}
+                  {p.fulfillmentType === "warehouse" && <span className="source-badge stale">Ships</span>}
+                  {p.fulfillmentType === "marketplace" && <span className="source-badge stale">Marketplace</span>}
                   {!p.available && <span className="source-badge stale">Out of stock</span>}
                 </div>
                 <button type="button" onClick={() => openImport(p)}>
