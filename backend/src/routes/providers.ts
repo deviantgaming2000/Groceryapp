@@ -1,7 +1,40 @@
 import { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { getDefaultUserId, prisma } from "../lib/prisma.js";
-import { getProvider, NormalizedLocation, NormalizedProduct, ProviderError } from "../services/providers/index.js";
+import { getProvider, providers as providerRegistry, GroceryProvider, NormalizedLocation, NormalizedProduct, ProviderError } from "../services/providers/index.js";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const STOP = new Set(["the", "and", "with", "for", "size", "each", "pack", "count", "value", "brand", "oz", "lb", "ct"]);
+function tokenize(s: string): string[] {
+  return (s || "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2 && !STOP.has(t));
+}
+/** Pick the product whose title best overlaps the search term (must have a price). */
+function pickBestProduct(term: string, products: NormalizedProduct[]): NormalizedProduct | null {
+  const want = new Set(tokenize(term));
+  if (!want.size) return null;
+  let best: NormalizedProduct | null = null;
+  let bestScore = 0;
+  for (const p of products) {
+    if (p.price == null) continue;
+    const toks = tokenize(p.title);
+    if (!toks.length) continue;
+    const overlap = toks.filter((t) => want.has(t)).length / want.size;
+    // Prefer better name overlap; break ties on lower price.
+    if (overlap > bestScore || (overlap === bestScore && best && (p.price ?? Infinity) < (best.price ?? Infinity))) {
+      bestScore = overlap;
+      best = p;
+    }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
+const norm = (x?: string | null) => (x ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Chain keys used to match a provider's stores to an existing local store row. */
+function providerChainKeys(providerId: string): string[] {
+  if (providerId === "kroger") return ["frys", "fry", "kroger"];
+  if (providerId.startsWith("walmart")) return ["walmart"];
+  return [];
+}
 
 const UNIT_TYPES = ["each", "lb", "oz", "gallon", "quart", "pint", "fl_oz", "pack", "case", "count"] as const;
 type UnitType = (typeof UNIT_TYPES)[number];
@@ -47,12 +80,39 @@ async function guard<T>(reply: FastifyReply, fn: () => Promise<T>): Promise<T | 
   }
 }
 
-/** Ensure a local Store row exists for a provider location; returns it. */
+/** Ensure a local Store row exists for a provider location; returns it.
+ *  To avoid duplicate rows (e.g. a manual "Walmart" plus a provider "Walmart — …"),
+ *  this reuses an existing store for the same chain and points it at the selected
+ *  branch, rather than creating a parallel store. */
 async function ensureLocalStore(userId: string, providerId: string, loc: NormalizedLocation) {
-  const existing = await prisma.store.findFirst({
+  // 1. Exact provider + branch match.
+  const exact = await prisma.store.findFirst({
     where: { userId, provider: providerId, externalId: loc.externalId }
   });
-  if (existing) return existing;
+  if (exact) return exact;
+
+  // 2. Reuse an existing store for the same chain (matches manual or other-provider rows).
+  const keys = providerChainKeys(providerId);
+  if (keys.length) {
+    const candidates = await prisma.store.findMany({ where: { userId } });
+    const match = candidates.find((s) => {
+      const st = norm(s.storeType);
+      const nm = norm(s.name);
+      return keys.some((k) => st === k || nm === k || st.includes(k) || nm.includes(k));
+    });
+    if (match) {
+      // Keep this single store pointed at the currently-selected branch.
+      if (match.provider !== providerId || match.externalId !== loc.externalId || !match.isActive) {
+        return prisma.store.update({
+          where: { id: match.id },
+          data: { provider: providerId, externalId: loc.externalId, isActive: true }
+        });
+      }
+      return match;
+    }
+  }
+
+  // 3. No existing chain store — create a new one.
   return prisma.store.create({
     data: {
       userId,
@@ -282,6 +342,102 @@ export async function providerRoutes(app: FastifyInstance) {
     if (!product) return reply.code(404).send({ error: "Product no longer found at the store.", code: "not_found" });
 
     return upsertPrice(userId, entry.groceryItemId, entry.storeId, product, entry.id);
+  });
+
+  // Bulk: take a grocery list and look up each item's price at every configured
+  // store, separating results per store. Rate-limited (capped calls + delay between
+  // requests + per-run cache) to stay gentle on the upstream providers.
+  app.post("/bulk-find-prices", async (request, reply) => {
+    const userId = await getDefaultUserId();
+    const { listId, providers: requested } = z
+      .object({ listId: z.string().min(1), providers: z.array(z.string()).optional() })
+      .parse(request.body);
+
+    const list = await prisma.groceryList.findFirst({
+      where: { id: listId, userId },
+      include: { items: { include: { groceryItem: true } } }
+    });
+    if (!list) return reply.code(404).send({ error: "List not found.", code: "not_found" });
+    if (!list.items.length) return reply.code(400).send({ error: "This list has no items.", code: "empty_list" });
+
+    // Candidate providers: configured AND have a selected store.
+    const ids = requested?.length ? requested : Object.keys(providerRegistry);
+    let active: { id: string; provider: GroceryProvider; locationId: string }[] = [];
+    for (const id of ids) {
+      const provider = getProvider(id);
+      if (!provider) continue;
+      if (!(await provider.isConfigured())) continue;
+      const locationId = (await getSavedLocationId(userId, id)) || provider.defaultLocationId?.();
+      if (!locationId) continue;
+      active.push({ id, provider, locationId });
+    }
+    // Collapse providers that resolve to the same physical store (e.g. both Walmart providers).
+    const seen = new Set<string>();
+    active = active.filter((e) => {
+      const cols = savedStoreColumns(e.id);
+      const key = `${cols?.id ?? e.id}|${e.locationId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!active.length) {
+      return reply
+        .code(400)
+        .send({ error: "No stores are set up for live lookup. Pick a store per provider in Find Products first.", code: "no_providers" });
+    }
+
+    const MAX_CALLS = 80; // hard ceiling per run across all stores
+    const DELAY_MS = 300; // pause between upstream calls
+    let calls = 0;
+    const summary: any[] = [];
+
+    for (const entry of active) {
+      const loc = await entry.provider.getLocation(entry.locationId).catch(() => null);
+      if (!loc) {
+        summary.push({ provider: entry.id, error: "Selected store not found." });
+        continue;
+      }
+      const store = await ensureLocalStore(userId, entry.id, loc);
+      const cache = new Map<string, NormalizedProduct[]>();
+      const itemResults: any[] = [];
+
+      for (const li of list.items) {
+        const term = li.groceryItem.name;
+        if (calls >= MAX_CALLS) {
+          itemResults.push({ item: term, status: "skipped", reason: "call limit reached" });
+          continue;
+        }
+        const cacheKey = term.toLowerCase();
+        let products = cache.get(cacheKey);
+        if (!products) {
+          try {
+            calls++;
+            products = await entry.provider.searchProducts({ term, limit: 5, locationId: entry.locationId });
+            cache.set(cacheKey, products);
+            await sleep(DELAY_MS);
+          } catch (e) {
+            itemResults.push({ item: term, status: "error", reason: e instanceof ProviderError ? e.message : "search failed" });
+            continue;
+          }
+        }
+        const best = pickBestProduct(term, products);
+        if (!best) {
+          itemResults.push({ item: term, status: "not_found" });
+          continue;
+        }
+        const price = await upsertPrice(userId, li.groceryItemId, store.id, best);
+        itemResults.push({ item: term, status: "added", product: best.title, price: best.price, priceId: price.id });
+      }
+
+      summary.push({
+        provider: entry.id,
+        store: store.name,
+        added: itemResults.filter((r) => r.status === "added").length,
+        items: itemResults
+      });
+    }
+
+    return { list: list.name, totalItems: list.items.length, apiCalls: calls, stores: summary };
   });
 }
 

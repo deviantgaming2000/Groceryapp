@@ -109,8 +109,34 @@ export function FindProductsPage() {
   const [newUnit, setNewUnit] = useState("each");
   const [confirming, setConfirming] = useState(false);
 
+  // Bulk: auto-fill prices for a whole grocery list across every configured store.
+  const [lists, setLists] = useState<{ id: string; name: string; items: any[] }[]>([]);
+  const [bulkListId, setBulkListId] = useState("");
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResult, setBulkResult] = useState<any | null>(null);
+
   const loadItems = () => api<AppItem[]>("/api/items").then(setItems).catch(() => {});
-  useEffect(() => { void loadItems(); }, []);
+  const loadLists = () => api<any[]>("/api/lists").then((l) => setLists(l.filter((x) => x.isActive !== false))).catch(() => {});
+  useEffect(() => { void loadItems(); void loadLists(); }, []);
+
+  async function runBulk() {
+    if (!bulkListId) return;
+    setError("");
+    setMessage("");
+    setBulkResult(null);
+    setBulkRunning(true);
+    try {
+      const res = await api<any>("/api/bulk-find-prices", { method: "POST", body: JSON.stringify({ listId: bulkListId }) });
+      setBulkResult(res);
+      const added = (res.stores ?? []).reduce((sum: number, s: any) => sum + (s.added ?? 0), 0);
+      setMessage(`Looked up ${res.totalItems} item(s) across ${res.stores?.length ?? 0} store(s) — added ${added} price(s) using ${res.apiCalls} API call(s).`);
+      await loadItems();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not auto-fill prices");
+    } finally {
+      setBulkRunning(false);
+    }
+  }
 
   const loadStatus = (p: ProviderId) =>
     api<ProviderStatus>(`/api/${p}/status`).then(setStatus).catch(() => setStatus(null));
@@ -271,6 +297,56 @@ export function FindProductsPage() {
           <h1>Find Products</h1>
           <p>Search live grocery product data, or keep adding prices manually in Price Entry.</p>
         </div>
+      </div>
+
+      {/* Bulk: auto-fill a whole grocery list across every configured store */}
+      <div className="panel" style={{ marginTop: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Auto-fill a grocery list</h2>
+            <p style={{ margin: "4px 0 0" }}>Pick a list and I'll look up each item at every store you've set up, separating prices per store. Rate-limited to stay gentle on the stores.</p>
+          </div>
+          <div className="toolbar" style={{ margin: 0 }}>
+            <label className="field" style={{ minWidth: 180 }}>
+              <span>Grocery list</span>
+              <select value={bulkListId} onChange={(e) => setBulkListId(e.target.value)}>
+                <option value="">Select a list…</option>
+                {lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.items?.length ?? 0})</option>)}
+              </select>
+            </label>
+            <button type="button" disabled={!bulkListId || bulkRunning} onClick={runBulk}>
+              {bulkRunning ? "Looking up…" : "Find prices across stores"}
+            </button>
+          </div>
+        </div>
+
+        {bulkResult && (
+          <div className="dashboard-grid" style={{ marginTop: 14 }}>
+            {(bulkResult.stores ?? []).map((s: any) => (
+              <article key={s.provider}>
+                <strong>{s.store ?? s.provider}</strong>
+                {s.error ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--danger, #f88)" }}>{s.error}</p>
+                ) : (
+                  <>
+                    <p style={{ margin: "4px 0 8px", fontSize: 13 }}>{s.added} of {bulkResult.totalItems} matched</p>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12.5, maxHeight: 220, overflow: "auto" }}>
+                      {(s.items ?? []).map((it: any, idx: number) => (
+                        <li key={idx} style={{ color: it.status === "added" ? "var(--ink)" : "var(--ink-soft)" }}>
+                          {it.item}: {it.status === "added"
+                            ? <>{money(it.price)} <span style={{ color: "var(--ink-soft)" }}>({it.product})</span></>
+                            : it.status === "not_found" ? "no match"
+                            : it.status === "error" ? `error — ${it.reason}`
+                            : it.reason ?? it.status}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Provider switcher */}
