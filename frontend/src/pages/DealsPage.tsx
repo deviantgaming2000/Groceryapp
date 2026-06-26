@@ -11,6 +11,7 @@ interface Deal {
   salePrice: number | null;
   regularPrice: number | null;
   discountAmount: number | null;
+  dealText?: string;
   couponRequired: boolean;
   digitalCoupon: boolean;
   loyaltyRequired: boolean;
@@ -40,6 +41,7 @@ export function DealsPage() {
   const [error, setError] = useState("");
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
+  const [storeFilter, setStoreFilter] = useState("");
 
   useEffect(() => {
     api<DealProvider[]>("/api/deals/providers").then(setProviders).catch(() => {});
@@ -54,6 +56,7 @@ export function DealsPage() {
     setError("");
     setLoading(true);
     setSearched(true);
+    setStoreFilter("");
     try {
       const params = new URLSearchParams({ source });
       if (query.trim()) params.set("q", query.trim());
@@ -93,7 +96,18 @@ export function DealsPage() {
     }
   }
 
-  const matchedCount = deals.filter((d) => d.matchedItemIds && d.matchedItemIds.length > 0).length;
+  // Flipp returns deals from many chains at once; let the user narrow to one store.
+  const storeCounts = deals.reduce<Map<string, number>>((m, d) => {
+    const name = d.storeName?.trim();
+    if (name) m.set(name, (m.get(name) ?? 0) + 1);
+    return m;
+  }, new Map());
+  const stores = [...storeCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  // Keep each deal's original index so saved/saving state (keyed by index) stays correct under filtering.
+  const visibleDeals = deals
+    .map((d, idx) => ({ d, idx }))
+    .filter(({ d }) => !storeFilter || d.storeName?.trim() === storeFilter);
+  const matchedCount = visibleDeals.filter(({ d }) => d.matchedItemIds && d.matchedItemIds.length > 0).length;
 
   return (
     <section>
@@ -136,6 +150,17 @@ export function DealsPage() {
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={source === "manual" ? "name, item, store…" : "milk, eggs, chicken…"} />
         </label>
         <button disabled={loading || (needsZip && !zip.trim())}>{loading ? "Searching…" : "Find deals"}</button>
+        {stores.length > 1 && (
+          <label className="field" style={{ minWidth: 160 }}>
+            <span>Store</span>
+            <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
+              <option value="">All stores ({deals.length})</option>
+              {stores.map(([name, count]) => (
+                <option key={name} value={name}>{name} ({count})</option>
+              ))}
+            </select>
+          </label>
+        )}
         {deals.length > 0 && (
           <button type="button" className="secondary" onClick={matchToList} disabled={matching}>
             {matching ? "Matching…" : "Match to my list"}
@@ -158,7 +183,7 @@ export function DealsPage() {
 
       {!loading && deals.length > 0 && (
         <div className="kroger-grid">
-          {deals.map((d, i) => {
+          {visibleDeals.map(({ d, idx: i }) => {
             const matched = d.matchedItemIds && d.matchedItemIds.length > 0;
             return (
               <article key={i} className="kroger-card" style={matched ? { borderColor: "rgba(46,230,166,0.5)", boxShadow: "0 0 0 1px rgba(46,230,166,0.25)" } : undefined}>
@@ -173,7 +198,10 @@ export function DealsPage() {
                       <>
                         <b>{money(d.salePrice)}</b>
                         {d.regularPrice != null && d.regularPrice > d.salePrice && <span className="kroger-was">{money(d.regularPrice)}</span>}
+                        {d.dealText && <span className="source-badge promo" style={{ marginLeft: 6 }}>{d.dealText}</span>}
                       </>
+                    ) : d.dealText ? (
+                      <b style={{ fontSize: 14, color: "var(--brand2)" }}>{d.dealText}</b>
                     ) : (
                       <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>{d.description || "See offer"}</span>
                     )}

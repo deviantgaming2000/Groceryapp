@@ -15,6 +15,7 @@ export interface NormalizedDeal {
   salePrice: number | null;
   regularPrice: number | null;
   discountAmount: number | null;
+  dealText?: string; // promo offer with no simple unit price, e.g. "BUY 3 GET 3 FREE"
   couponRequired: boolean;
   digitalCoupon: boolean;
   loyaltyRequired: boolean;

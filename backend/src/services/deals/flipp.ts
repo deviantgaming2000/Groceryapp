@@ -46,6 +46,9 @@ function normalize(item: FlippItem, zip?: string): NormalizedDeal {
   const sale = num(item.current_price);
   const regular = num(item.original_price);
   const { digitalCoupon, loyaltyRequired } = parsePostPriceText((item as any).post_price_text);
+  // sale_story carries the actual offer for promo deals that have no numeric price
+  // (e.g. "BUY 3, GET 3 FREE", "Buy 2 get 2 FREE with myWalgreens").
+  const dealText = item.sale_story?.trim() || undefined;
   const description = [item.sale_story, item.pre_price_text, (item as any).post_price_text]
     .filter(Boolean).join(" · ") || undefined;
   return {
@@ -57,6 +60,7 @@ function normalize(item: FlippItem, zip?: string): NormalizedDeal {
     salePrice: sale,
     regularPrice: regular,
     discountAmount: regular != null && sale != null && regular > sale ? Number((regular - sale).toFixed(2)) : null,
+    dealText,
     couponRequired: digitalCoupon,
     digitalCoupon,
     loyaltyRequired,
@@ -110,6 +114,30 @@ async function fetchItems(query: string, zip: string, limit: number): Promise<No
   return deals.slice(0, limit);
 }
 
+// Flipp's search can't be filtered to one merchant (it ignores merchant_id), so the
+// page filters by store client-side. To give every store enough deals to slice, the
+// no-query view fans out across many categories and fetches a healthy count of each,
+// then dedupes. The broader the net, the better each individual store is represented.
+const BROAD_CATEGORIES = [
+  "meat", "produce", "dairy", "snack", "beverage", "frozen", "bread",
+  "deli", "chicken", "cheese", "cereal", "coffee", "soda", "ice cream"
+];
+
+async function fetchBroad(zip: string, limit: number): Promise<NormalizedDeal[]> {
+  // Fetch a solid slice per category so a single store isn't reduced to 1-2 items.
+  const perCategory = Math.max(20, Math.ceil(limit / 3));
+  const sets = await Promise.all(BROAD_CATEGORIES.map((t) => fetchItems(t, zip, perCategory)));
+  const seen = new Set<string>();
+  const merged: NormalizedDeal[] = [];
+  for (const deals of sets) {
+    for (const d of deals) {
+      const key = d.productName + "|" + d.storeName;
+      if (!seen.has(key)) { seen.add(key); merged.push(d); }
+    }
+  }
+  return merged.slice(0, limit);
+}
+
 export const flippDealsProvider: DealsProvider = {
   id: "flipp",
   label: "Flipp (weekly-ad flyers)",
@@ -122,40 +150,15 @@ export const flippDealsProvider: DealsProvider = {
   async searchDeals(params: DealsSearchParams) {
     if (!params.zip) throw new ProviderError("Enter a ZIP code to find local flyer deals.", "bad_request", 400);
     const term = params.query?.trim();
-    // When no specific query is given, pull a broad mix of common categories so the
-    // page isn't empty. "grocery" matches the store-category label (not products).
-    if (!term) {
-      const broad = ["meat", "produce", "dairy", "snack", "beverage"];
-      const sets = await Promise.all(broad.map((t) => fetchItems(t, params.zip!, Math.ceil((params.limit ?? 40) / broad.length))));
-      const seen = new Set<string>();
-      const merged: NormalizedDeal[] = [];
-      for (const deals of sets) {
-        for (const d of deals) {
-          const key = d.productName + "|" + d.storeName;
-          if (!seen.has(key)) { seen.add(key); merged.push(d); }
-        }
-      }
-      return merged.slice(0, params.limit ?? 40);
-    }
+    // No query → broad mix across categories so the page (and its store filter) is full.
+    if (!term) return fetchBroad(params.zip, params.limit ?? 120);
     return fetchItems(term, params.zip, params.limit ?? 40);
   },
 
   async getWeeklyAd(params: DealsSearchParams) {
     if (!params.zip) throw new ProviderError("Enter a ZIP code to load weekly-ad deals.", "bad_request", 400);
     const term = params.query?.trim();
-    if (!term) {
-      const broad = ["meat", "produce", "dairy", "snack", "beverage", "frozen", "bread"];
-      const sets = await Promise.all(broad.map((t) => fetchItems(t, params.zip!, Math.ceil((params.limit ?? 60) / broad.length))));
-      const seen = new Set<string>();
-      const merged: NormalizedDeal[] = [];
-      for (const deals of sets) {
-        for (const d of deals) {
-          const key = d.productName + "|" + d.storeName;
-          if (!seen.has(key)) { seen.add(key); merged.push(d); }
-        }
-      }
-      return merged.slice(0, params.limit ?? 60);
-    }
+    if (!term) return fetchBroad(params.zip, params.limit ?? 120);
     return fetchItems(term, params.zip, params.limit ?? 60);
   }
 };
