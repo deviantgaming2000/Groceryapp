@@ -63,7 +63,7 @@ export function FlyersPage() {
     try {
       const res = await api<{ price: number | null; dealText: string | null }>("/api/deals/read-image", {
         method: "POST",
-        body: JSON.stringify({ imageUrl: deal.imageUrl, productName: deal.productName })
+        body: JSON.stringify({ imageUrl: deal.imageUrl, productName: deal.productName, validTo: deal.validTo ?? null })
       });
       setItems((list) => list.map((d, i) => i === idx ? { ...d, salePrice: res.price ?? d.salePrice, dealText: res.dealText ?? d.dealText } : d));
       if (res.price == null && !res.dealText) setMessage(`Vision couldn't read a price for "${deal.productName}".`);
@@ -95,7 +95,7 @@ export function FlyersPage() {
         try {
           const res = await api<{ price: number | null; dealText: string | null }>("/api/deals/read-image", {
             method: "POST",
-            body: JSON.stringify({ imageUrl: d.imageUrl, productName: d.productName })
+            body: JSON.stringify({ imageUrl: d.imageUrl, productName: d.productName, validTo: d.validTo ?? null })
           });
           if (res.price != null || res.dealText) found++;
           setItems((list) => list.map((x, idx) => idx === i ? { ...x, salePrice: res.price ?? x.salePrice, dealText: res.dealText ?? x.dealText } : x));

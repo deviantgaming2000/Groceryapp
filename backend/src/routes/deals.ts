@@ -91,6 +91,8 @@ export async function dealRoutes(app: FastifyInstance) {
   });
 
   // Every item in one flyer — the full ad (richer than keyword search).
+  // Merges any cached vision reads (still within their sale window) so previously
+  // read image-only items show their price instantly without re-OCR.
   app.get("/deals/flyers/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const q = request.query as Record<string, string>;
@@ -98,7 +100,26 @@ export async function dealRoutes(app: FastifyInstance) {
     const settings = (await prisma.userSettings.findUnique({ where: { userId } })) as Record<string, any> | null;
     const zip = q.zip || settings?.homeZip;
     if (!zip) return reply.code(400).send({ error: "Enter a ZIP code to load this flyer.", code: "bad_request" });
-    return guard(reply, () => fetchFlyerItems(id, zip, q.merchant));
+
+    const items = await guard(reply, () => fetchFlyerItems(id, zip, q.merchant));
+    if (items === undefined) return; // error already sent
+
+    const now = new Date();
+    // Drop reads whose sale has ended (forces a fresh read on next week's flyer).
+    await prisma.flyerItemRead.deleteMany({ where: { userId, validTo: { lt: now } } });
+    const urls = items.map((i) => i.imageUrl).filter(Boolean) as string[];
+    if (urls.length) {
+      const cached = await prisma.flyerItemRead.findMany({ where: { userId, cacheKey: { in: urls } } });
+      const byUrl = new Map(cached.map((c) => [c.cacheKey, c]));
+      for (const it of items) {
+        if (it.salePrice == null && it.imageUrl && byUrl.has(it.imageUrl)) {
+          const c = byUrl.get(it.imageUrl)!;
+          if (c.price != null) it.salePrice = Number(c.price);
+          if (c.dealText) it.dealText = c.dealText;
+        }
+      }
+    }
+    return items;
   });
 
   // Whether the local vision OCR (Ollama) is configured — drives the "Read price" button.
@@ -106,12 +127,22 @@ export async function dealRoutes(app: FastifyInstance) {
     return { configured: await isVisionConfigured() };
   });
 
-  // Read a price/deal off a flyer clipping image using the local vision model.
+  // Read a price/deal off a flyer clipping image using the local vision model,
+  // and cache the result until the sale's end (validTo) so it isn't re-read.
   app.post("/deals/read-image", async (request, reply) => {
-    const { imageUrl, productName } = z
-      .object({ imageUrl: z.string().url(), productName: z.string().optional() })
+    const userId = await getDefaultUserId();
+    const { imageUrl, productName, validTo } = z
+      .object({ imageUrl: z.string().url(), productName: z.string().optional(), validTo: z.string().optional().nullable() })
       .parse(request.body);
-    return guard(reply, () => readDealFromImage(imageUrl, productName));
+    const result = await guard(reply, () => readDealFromImage(imageUrl, productName));
+    if (result === undefined) return; // error already sent
+    const validToDate = validTo ? new Date(validTo) : null;
+    await prisma.flyerItemRead.upsert({
+      where: { userId_cacheKey: { userId, cacheKey: imageUrl } },
+      create: { userId, cacheKey: imageUrl, price: result.price ?? null, dealText: result.dealText ?? null, validTo: validToDate },
+      update: { price: result.price ?? null, dealText: result.dealText ?? null, validTo: validToDate, readAt: new Date() }
+    });
+    return result;
   });
 
   // matchDealsToGroceryList({ deals }) → deals annotated with matchedItemIds

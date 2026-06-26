@@ -312,3 +312,20 @@ model ApiCredential {
   @@map("api_credentials")
 }
 
+// Cached vision-OCR reads of flyer clipping images. Keyed by the (stable, weekly)
+// image URL and kept until the sale's valid_to, so a flyer is only read once per
+// sale window; new flyers (new image URLs) get read fresh.
+model FlyerItemRead {
+  id       String    @id @default(cuid())
+  userId   String    @map("user_id")
+  cacheKey String    @map("cache_key")
+  price    Decimal?  @db.Decimal(12, 2)
+  dealText String?   @map("deal_text")
+  validTo  DateTime? @map("valid_to")
+  readAt   DateTime  @default(now()) @map("read_at")
+
+  @@unique([userId, cacheKey])
+  @@index([userId])
+  @@map("flyer_item_reads")
+}
+
