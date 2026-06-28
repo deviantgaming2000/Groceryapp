@@ -318,7 +318,7 @@ Endpoints:
 npm run test --workspace backend
 ```
 
-Tests cover unit price math, bulk leftovers, driving cost, stale prices, coupon application, incomplete store totals, and adjusted totals.
+Tests cover unit price math, bulk leftovers, driving cost, stale prices, coupon application, incomplete store totals, and adjusted totals. The compare route is also covered: an unknown or unowned list returns a clean 404 (no leaked paths or ORM internals), and a missing user-settings row falls back to defaults.
 
 ## Privacy
 
