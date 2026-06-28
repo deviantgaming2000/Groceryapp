@@ -6,10 +6,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## Backend error handling
 
-The global Fastify error handler in `backend/src/server.ts` turns any uncaught error into a `500` whose body echoes the raw error message (except the friendly "database not running" case).
-That raw message includes the absolute source path and ORM internals, so it must never be the path for an expected condition.
-Route handlers must map expected "resource not found / not owned" cases explicitly, e.g. `findFirst` + `if (!row) return reply.status(404).send({ error: "..." })`.
-Do not use `findUniqueOrThrow` for request-scoped lookups: its `P2025` falls through to the global handler and leaks internals.
+The global Fastify error handler in `backend/src/server.ts` sanitizes unexpected failures: any unhandled 5xx-class error is logged server-side via `request.log.error` and returned to the client as a generic `{ error: "Internal server error" }`, so absolute source paths, stack traces, and ORM internals never leak.
+Two behaviors are preserved deliberately: the friendly "database not running" message for `Can't reach database server`, and any error carrying a 4xx `statusCode` (Fastify schema validation, or an error a route raised with an explicit status) passes through with its own message and status - real 4xx responses are never collapsed into 500s.
+Even with this net, route handlers must still map expected "resource not found / not owned" cases explicitly, e.g. `findFirst` + `if (!row) return reply.status(404).send({ error: "..." })`, so clients get a meaningful 404 rather than a generic 500.
+Do not use `findUniqueOrThrow` for request-scoped lookups: its `P2025` is a 5xx and would now surface only as the generic message.
 
 ## Workspaces and dependency hygiene
 

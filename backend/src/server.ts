@@ -1,5 +1,5 @@
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { type FastifyError } from "fastify";
 import { itemRoutes } from "./routes/items.js";
 import { storeRoutes } from "./routes/stores.js";
 import { listRoutes } from "./routes/lists.js";
@@ -19,12 +19,33 @@ export function buildServer() {
   const app = Fastify({ logger: true });
   app.register(cors, { origin: true });
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error: FastifyError, request, reply) => {
     const rawMessage = error instanceof Error ? error.message : String(error);
-    const message = rawMessage.includes("Can't reach database server")
-      ? "Database is not running. Start PostgreSQL, then run Prisma migrations."
-      : rawMessage;
-    reply.status(500).send({ error: message });
+
+    // Intentional: surface the friendly database-unreachable guidance.
+    if (rawMessage.includes("Can't reach database server")) {
+      request.log.error(error);
+      return reply.status(500).send({
+        error: "Database is not running. Start PostgreSQL, then run Prisma migrations."
+      });
+    }
+
+    // Client errors (4xx) - including Fastify schema validation and any error
+    // a route raised with an explicit statusCode - carry safe, useful messages.
+    // Pass them through unchanged; never collapse a real 4xx into a 500.
+    const statusCode =
+      typeof error.statusCode === "number" && error.statusCode >= 400
+        ? error.statusCode
+        : 500;
+    if (statusCode < 500) {
+      return reply.status(statusCode).send({ error: rawMessage });
+    }
+
+    // Unexpected/unhandled (5xx) errors: log the real error server-side so
+    // debugging information is preserved, but return a generic body so we never
+    // leak the server's filesystem paths, stack traces, or ORM internals.
+    request.log.error(error);
+    return reply.status(statusCode).send({ error: "Internal server error" });
   });
 
   app.get("/health", async () => ({ ok: true }));
