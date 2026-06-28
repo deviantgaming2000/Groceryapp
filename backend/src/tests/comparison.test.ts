@@ -70,6 +70,28 @@ describe("comparison engine", () => {
     expect(result.storeTotals[0].adjustedTotal).toBeCloseTo(11.15);
   });
 
+  it("adds the gas/driving-adjusted total on top of the grocery total", () => {
+    // round_trip_miles = 10 * 2 = 20; gallons_used = 20 / 25 = 0.8;
+    // driving_cost = 0.8 * 4 = 3.20; adjusted_total = 9 + 3.20 = 12.20
+    const result = compareGroceryList({
+      list,
+      stores: [stores[0]],
+      priceEntries: [
+        { id: "p1", groceryItemId: "beef", storeId: "walmart", price: 5, packageQuantity: 1, packageUnit: "lb", recordedAt: now, confidence: "confirmed" },
+        { id: "p2", groceryItemId: "eggs", storeId: "walmart", price: 4, packageQuantity: 12, packageUnit: "count", recordedAt: now, confidence: "confirmed" }
+      ],
+      coupons: [],
+      distances: [{ storeId: "walmart", oneWayMiles: 10, oneWayMinutes: 18 }],
+      settings: { vehicleMpg: 25, gasPricePerGallon: 4, roundTrip: true, staleDays: 14, veryStaleDays: 30 },
+      now
+    });
+    const walmart = result.storeTotals[0];
+    expect(walmart.groceryTotal).toBeCloseTo(9);
+    expect(walmart.drivingCost).toBeCloseTo(3.2);
+    expect(walmart.adjustedTotal).toBeCloseTo(12.2);
+    expect(result.bestAdjustedStore?.adjustedTotal).toBeCloseTo(12.2);
+  });
+
   it("treats each as one store package when package units differ", () => {
     const result = compareGroceryList({
       list: {
