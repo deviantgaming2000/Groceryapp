@@ -20,9 +20,23 @@ export interface ParsedGroceryItem {
 // Leading list decoration: "1.", "2)", "3]", "-", "*", "•", "–", "·".
 const BULLET_RE = /^\s*(?:\d{1,3}[.)\]]|[-*•·–])\s+/;
 
-// A trailing comma-segment is read as a quantity when it starts with a number
-// ("18 count", "4-5 lb", "2 lb", "4 cans") or a size adjective ("large tub").
-const QTY_NUMERIC_RE = /^\d/;
+// Count/measure tokens that mark a number as an amount rather than part of the
+// product identity ("2 lb", "18 count", "4 cans") - distinct from identity
+// descriptors like "2%" or "100% whole wheat", which must stay in the name.
+const QTY_UNIT =
+  "(?:lbs?|oz|fl\\s*oz|g|kg|mg|ml|l|gal|gallons?|quarts?|qt|pints?|pt|count|ct|" +
+  "cans?|packs?|pks?|pk|dozen|doz|bunch(?:es)?|bags?|box(?:es)?|jars?|bottles?|" +
+  "loaf|loaves|heads?|cloves?|sticks?|tubs?|containers?|cartons?|cups?|tbsp|tsp|" +
+  "pieces?|slices?)";
+
+// A trailing comma-segment is read as a quantity when it is a bare number,
+// decimal, or range ("2", "4-5"), optionally followed by a unit/count token
+// ("18 count", "4-5 lb", "2 lb", "4 cans"), or a size adjective ("large tub").
+// A number glued to other text - "2%", "100% whole wheat" - is NOT a quantity.
+const QTY_NUMERIC_RE = new RegExp(
+  `^\\d+(?:\\.\\d+)?(?:\\s*-\\s*\\d+(?:\\.\\d+)?)?(?:\\s+${QTY_UNIT})?\\s*$`,
+  "i"
+);
 const QTY_SIZE_RE = /^(?:extra\s+)?(?:small|medium|large|big|jumbo|family|mini|x-?large|xl)\b/i;
 
 function collapse(text: string): string {

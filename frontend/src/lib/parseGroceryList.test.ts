@@ -75,6 +75,19 @@ describe("parseGroceryList — quantity extraction", () => {
     const item = parseGroceryList("Almonds, walnuts, or pistachios")[0];
     expect(item.quantity).toBeUndefined();
   });
+
+  it("keeps a percentage identity descriptor in the name, not as quantity", () => {
+    expect(parseGroceryList("Milk, 2%")[0]).toEqual({ name: "Milk, 2%" });
+    expect(parseGroceryList("Bread, 100% whole wheat")[0]).toEqual({ name: "Bread, 100% whole wheat" });
+  });
+
+  it("pulls a bare numeric quantity", () => {
+    expect(parseGroceryList("Bananas, 6")[0]).toEqual({ name: "Bananas", quantity: "6" });
+  });
+
+  it("does not treat a number glued to non-unit text as a quantity", () => {
+    expect(parseGroceryList("Cereal, 3 musketeers")[0]).toEqual({ name: "Cereal, 3 musketeers" });
+  });
 });
 
 describe("parseGroceryList — OR / alternatives", () => {
