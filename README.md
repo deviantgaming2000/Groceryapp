@@ -327,9 +327,16 @@ The `walmart-scraper` service is built from `../walmart-scraper`, listens on 809
 `condition: service_healthy` and is given `WALMART_SCRAPER_URL=http://walmart-scraper:8090`,
 so it reaches the scraper by service name.
 
-The scraper is an optional, auto-started dependency: manual price entry and the rest of the
-app never require it. If the scraper is unreachable, the Walmart-scraper provider simply
-reports that the service is down.
+Unlike local dev, the scraper is **effectively required** in Docker: because the
+`walmart-scraper` service builds from the sibling `../walmart-scraper`, `docker compose up
+--build` fails if that repo is absent, and because `backend` waits on
+`condition: service_healthy`, the backend will not start until the scraper is healthy. Make
+sure the sibling repo is cloned (and reachable via `WALMART_SCRAPER_CONTEXT` if it lives
+elsewhere) before bringing the stack up.
+
+Graceful degradation at runtime still applies: if the scraper later becomes unreachable, the
+Walmart-scraper provider simply reports that the service is down, and manual price entry and
+the rest of the app keep working.
 
 ## Managing API Keys
 

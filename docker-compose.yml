@@ -30,8 +30,12 @@ services:
     command: sh -c "npx prisma migrate deploy && npm run seed"
 
   # Self-hosted Walmart scraper. Built from the sibling repo (default ../walmart-scraper,
-  # overridable via WALMART_SCRAPER_CONTEXT). Optional: the app boots and manual price
-  # entry works without it; the backend simply reports the Walmart scraper as unreachable.
+  # overridable via WALMART_SCRAPER_CONTEXT). Effectively required in Docker: this service
+  # builds from that sibling (so `docker compose up --build` fails if it is absent), and
+  # `backend` waits on `condition: service_healthy` below, so the backend will not start
+  # until the scraper is healthy. (In local dev `npm run dev` instead degrades gracefully.)
+  # At runtime, if the scraper goes unreachable the backend just reports it as down and
+  # manual price entry keeps working.
   walmart-scraper:
     build:
       context: ${WALMART_SCRAPER_CONTEXT:-../walmart-scraper}
