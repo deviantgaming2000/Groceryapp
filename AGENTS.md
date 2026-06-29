@@ -20,6 +20,19 @@ Workspace members do not carry their own `package-lock.json`: the single root lo
 These are cleared only by the breaking `vitest@4` upgrade, which is a deliberately separate task - do NOT run `npm audit fix --force` to silence them, as that bumps vitest/vite/esbuild and can break the test setup.
 Plain `npm audit fix` (non-breaking) is fine and already cleared the `shell-quote` (critical, via `concurrently`) and `@babel/core` (high) advisories.
 
+## Frontend tests
+
+The frontend now has its own Vitest suite (`frontend` package `test` script = `vitest run`, config under `test` in `frontend/vite.config.ts`, node environment, `src/**/*.test.ts`).
+The root `npm test` runs both workspaces: `npm run test --workspace backend && npm run test --workspace frontend`.
+Vitest is a shared dev tool already in the tree; it lives in the root lockfile (no nested lock under `frontend/`).
+
+## Pasted grocery-list search (Find Products)
+
+`frontend/src/lib/parseGroceryList.ts` turns free-text grocery lists into structured `ParsedGroceryItem` objects (`name`, optional `category`/`quantity`/`alternatives`/`notes`).
+It strips list numbering/bullets, pulls a trailing-comma quantity ("18 count", "4-5 lb", "large tub"), and splits OR-groups three ways: plain `A or B`, Oxford `A, B, or C` (full options), and `noun, mod or mod` (expands to `mod noun` options, e.g. "Berries, fresh or frozen" -> "fresh berries"/"frozen berries"). Lines ending in `:` are section headers and tag following items as `category`; `isExtraItem` flags the drinks/extras section. Keep its tests (`parseGroceryList.test.ts`) as the source of truth - that is the highest-value test surface for this feature.
+`frontend/src/components/GroceryListSearch.tsx` (embedded in `FindProductsPage`) runs each item + alternatives through the existing `GET /api/:provider/products/search`, groups results by item, and "Add picks" reuses the existing `POST /api/:provider/import` then `POST /api/lists/:id/items` so picks become real list items. Per-item search failures are caught individually so one item never aborts the others. Fry's is the Kroger provider at a Fry's store - no separate Fry's path exists or should be added.
+Shared product-match helpers (`tokenize`/`suggestItem`/`guessUnit`) live in `frontend/src/lib/productMatch.ts`, used by both the single-term search and the grouped list search.
+
 ## Frontend bundle size (Three.js / Vanta)
 
 Three.js + Vanta.js are heavy (~625 kB combined) and power only the visual-only fog in `frontend/src/components/VantaBackground.tsx`.

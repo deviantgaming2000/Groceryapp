@@ -1,47 +1,15 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, money } from "../lib/api";
 import { units } from "../components/FormFields";
-
-interface AppItem { id: string; name: string; category: string; unitType: string }
-
-const STOP = new Set(["the", "and", "with", "for", "size", "each", "pack", "count", "value", "brand"]);
-function tokenize(s: string): string[] {
-  return (s || "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2 && !STOP.has(t));
-}
-/** Suggest the existing item whose name best overlaps the product title. */
-function suggestItem(title: string, items: AppItem[]): AppItem | null {
-  const titleTokens = new Set(tokenize(title));
-  let best: AppItem | null = null;
-  let bestScore = 0;
-  for (const it of items) {
-    const itTokens = tokenize(it.name);
-    if (!itTokens.length) continue;
-    const overlap = itTokens.filter((t) => titleTokens.has(t)).length;
-    const score = overlap / itTokens.length;
-    if (score > bestScore) {
-      bestScore = score;
-      best = it;
-    }
-  }
-  return bestScore >= 0.5 ? best : null;
-}
-function guessUnit(size?: string): string {
-  const s = (size || "").toLowerCase();
-  if (/fl\.?\s*oz|fluid/.test(s)) return "fl_oz";
-  if (/\bgal|gallon/.test(s)) return "gallon";
-  if (/\bqt|quart/.test(s)) return "quart";
-  if (/\bpt|pint/.test(s)) return "pint";
-  if (/\boz|ounce/.test(s)) return "oz";
-  if (/\blb|pound/.test(s)) return "lb";
-  return "each";
-}
+import { AppItem, guessUnit, suggestItem } from "../lib/productMatch";
+import { GroceryListSearch } from "../components/GroceryListSearch";
 
 const PROVIDERS = [
   { id: "kroger", label: "Kroger / Fry's" },
   { id: "walmart", label: "Walmart" },
   { id: "walmart-scraper", label: "Walmart (self-hosted)" }
 ] as const;
-type ProviderId = (typeof PROVIDERS)[number]["id"];
+export type ProviderId = (typeof PROVIDERS)[number]["id"];
 
 interface ProviderStatus {
   provider: string;
@@ -62,12 +30,15 @@ interface PLocation {
   zip?: string;
 }
 
-interface PProduct {
+export interface PProduct {
   externalProductId: string;
   title: string;
   brand?: string;
   size?: string;
   imageUrl?: string;
+  productUrl?: string;
+  source?: string;
+  storeName?: string;
   price: number | null;
   regularPrice: number | null;
   promoPrice: number | null;
@@ -462,7 +433,19 @@ export function FindProductsPage() {
         </div>
       )}
 
-      {/* Product search */}
+      {/* Paste a whole grocery list → grouped search → pick matches → build the cart */}
+      <GroceryListSearch
+        provider={provider}
+        providerLabel={status?.label ?? PROVIDERS.find((p) => p.id === provider)?.label ?? provider}
+        configured={status?.configured ?? false}
+        hasStores={status?.hasStores ?? false}
+        selectedStore={status?.selectedStore ?? null}
+        items={items}
+        lists={lists}
+        onChanged={() => { void loadItems(); void loadLists(); }}
+      />
+
+      {/* Single-term product search */}
       <form className="toolbar" style={{ marginTop: 18 }} onSubmit={searchProducts}>
         <label className="field" style={{ flex: 1, minWidth: 200 }}>
           <span>Search products</span>
