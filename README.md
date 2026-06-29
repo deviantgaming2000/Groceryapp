@@ -215,8 +215,16 @@ KROGER_CLIENT_SECRET=your_client_secret
 1. Open **Find Products**.
 2. Choose a store (search by ZIP — prefilled from your saved home ZIP when available). The selected
    store is saved to settings and reused for future searches.
-3. Search for a product, then **Add from Kroger** to import it into your Items and Price Entry.
+3. Search for a single product, then **Add from Kroger** to import it into your Items and Price Entry.
 4. Imported prices show a **Kroger** badge and a **Refresh** button to re-fetch price/availability.
+
+You can also **paste a whole grocery list** at the top of **Find Products**. The list is parsed into
+items (numbering/bullets stripped, trailing-comma quantities like "18 count" pulled out, and
+"A or B" / "A, B, or C" / "Berries, fresh or frozen" alternatives expanded). Each item is searched
+against the selected provider, results are grouped by grocery item so you can pick the best match per
+item, and **Add picks** imports the chosen products and adds them to a new or existing grocery list in
+one step. This works for any configured provider; per-item search failures are isolated so one bad
+item never aborts the rest.
 
 ### How it works
 
@@ -315,10 +323,14 @@ Endpoints:
 ## Tests
 
 ```bash
-npm run test --workspace backend
+npm test
 ```
 
-Tests cover unit price math, bulk leftovers, driving cost, incomplete store totals, and the gas/driving-adjusted store total (its own focused test). Stale prices and coupon application are exercised together in one combined test. The compare route is also covered: an unknown or unowned list returns a clean 404 (no leaked paths or ORM internals), and a missing user-settings row falls back to defaults.
+This runs both workspace suites (`npm run test --workspace backend && npm run test --workspace frontend`); run either workspace alone with `npm run test --workspace backend` or `npm run test --workspace frontend`.
+
+Backend tests cover unit price math, bulk leftovers, driving cost, incomplete store totals, and the gas/driving-adjusted store total (its own focused test). Stale prices and coupon application are exercised together in one combined test. The compare route is also covered: an unknown or unowned list returns a clean 404 (no leaked paths or ORM internals), and a missing user-settings row falls back to defaults.
+
+Frontend tests (Vitest) cover the grocery-list parser (`frontend/src/lib/parseGroceryList.ts`): list-numbering/bullet stripping, trailing-comma quantity extraction, and the three OR-group splits (plain `A or B`, Oxford `A, B, or C`, and modifier `noun, mod or mod`).
 
 ## Privacy
 
