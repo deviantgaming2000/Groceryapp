@@ -29,6 +29,25 @@ services:
         condition: service_healthy
     command: sh -c "npx prisma migrate deploy && npm run seed"
 
+  # Self-hosted Walmart scraper. Built from the sibling repo (default ../walmart-scraper,
+  # overridable via WALMART_SCRAPER_CONTEXT). Effectively required in Docker: this service
+  # builds from that sibling (so `docker compose up --build` fails if it is absent), and
+  # `backend` waits on `condition: service_healthy` below, so the backend will not start
+  # until the scraper is healthy. (In local dev `npm run dev` instead degrades gracefully.)
+  # At runtime, if the scraper goes unreachable the backend just reports it as down and
+  # manual price entry keeps working.
+  walmart-scraper:
+    build:
+      context: ${WALMART_SCRAPER_CONTEXT:-../walmart-scraper}
+    restart: unless-stopped
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: .
@@ -40,11 +59,15 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-grocery}:${POSTGRES_PASSWORD:-grocery_change_me}@postgres:5432/${POSTGRES_DB:-grocery_price_checker}?schema=public
       SINGLE_USER_EMAIL: ${SINGLE_USER_EMAIL:-local@example.com}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # Reach the scraper by its compose service name on the shared default network.
+      WALMART_SCRAPER_URL: ${WALMART_SCRAPER_URL:-http://walmart-scraper:8090}
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      walmart-scraper:
+        condition: service_healthy
     expose:
       - "4000"
     healthcheck:

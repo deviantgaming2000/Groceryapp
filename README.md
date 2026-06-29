@@ -38,6 +38,8 @@ This is the recommended deployment path. It runs:
 
 - `postgres`: persistent PostgreSQL database
 - `migrate`: one-shot Prisma migration and seed job
+- `walmart-scraper`: the self-hosted Walmart scraper, built from the sibling
+  `../walmart-scraper` repo (see [Walmart scraper](#walmart-self-hosted-scraper))
 - `backend`: compiled Fastify API
 - `frontend`: nginx serving the React app and proxying `/api` to the backend
 
@@ -121,6 +123,11 @@ npm install
 npm run setup:db
 npm run dev
 ```
+
+`npm run dev` starts the backend, frontend, **and** the Walmart scraper together (see
+[Walmart scraper](#walmart-self-hosted-scraper)). The scraper is optional: if its repo or
+deps are missing, `npm run dev` prints a one-line `[scraper] skipped: ...` warning and keeps
+the backend and frontend running. Manual price entry works without it.
 
 If you prefer the individual commands:
 
@@ -268,6 +275,68 @@ The selected store is saved and passed as `store_id` on every search/import/refr
 Walmart uses the same provider/normalization layer and the same `/api/walmart/*` routes
 (`status`, `locations`, `store`, `products/search`, `products/:id`, `import`, `prices/:id/refresh`)
 as Kroger.
+
+## Walmart (self-hosted scraper)
+
+Besides SerpApi, Walmart search can run through a free, self-hosted scraper service that
+lives in a **separate sibling repo**, `../walmart-scraper`. The expected on-disk layout is:
+
+```text
+~/code/grocery-price-checker   (this repo)
+~/code/walmart-scraper         (the scraper, cloned alongside)
+```
+
+The scraper now starts **automatically with the app in both run paths** - local
+`npm run dev` and `docker compose up`. The backend reaches it over HTTP via
+`WALMART_SCRAPER_URL` (default `http://localhost:8090` locally,
+`http://walmart-scraper:8090` inside Docker).
+
+### One-time setup
+
+Clone the scraper next to this repo and install its dependencies once:
+
+```bash
+git clone <walmart-scraper-repo> ../walmart-scraper
+cd ../walmart-scraper && npm install
+```
+
+Or, from this repo, use the convenience script:
+
+```bash
+npm run setup:scraper
+```
+
+If the scraper is not the default sibling, set `WALMART_SCRAPER_DIR` (local dev) or
+`WALMART_SCRAPER_CONTEXT` (Docker build context) to its path.
+
+### Local dev (`npm run dev`)
+
+`npm run dev` runs the scraper via `npm run scraper`, a small guard wrapper
+(`scripts/start-scraper.mjs`) that:
+
+- resolves the scraper at `WALMART_SCRAPER_DIR` or the default `../walmart-scraper`,
+- runs the scraper's own `npm run api` (port 8090), and
+- **degrades gracefully**: if the directory is missing or its deps aren't installed, it
+  prints a single `[scraper] skipped: ...` warning and exits cleanly, so the backend and
+  frontend keep running. It does not run `npm install` for you (that's the one-time setup above).
+
+### Docker (`docker compose up`)
+
+The `walmart-scraper` service is built from `../walmart-scraper`, listens on 8090 with a
+`/health` healthcheck, and shares the default compose network. `backend` depends on it with
+`condition: service_healthy` and is given `WALMART_SCRAPER_URL=http://walmart-scraper:8090`,
+so it reaches the scraper by service name.
+
+Unlike local dev, the scraper is **effectively required** in Docker: because the
+`walmart-scraper` service builds from the sibling `../walmart-scraper`, `docker compose up
+--build` fails if that repo is absent, and because `backend` waits on
+`condition: service_healthy`, the backend will not start until the scraper is healthy. Make
+sure the sibling repo is cloned (and reachable via `WALMART_SCRAPER_CONTEXT` if it lives
+elsewhere) before bringing the stack up.
+
+Graceful degradation at runtime still applies: if the scraper later becomes unreachable, the
+Walmart-scraper provider simply reports that the service is down, and manual price entry and
+the rest of the app keep working.
 
 ## Managing API Keys
 

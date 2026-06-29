@@ -20,6 +20,17 @@ Workspace members do not carry their own `package-lock.json`: the single root lo
 These are cleared only by the breaking `vitest@4` upgrade, which is a deliberately separate task - do NOT run `npm audit fix --force` to silence them, as that bumps vitest/vite/esbuild and can break the test setup.
 Plain `npm audit fix` (non-breaking) is fine and already cleared the `shell-quote` (critical, via `concurrently`) and `@babel/core` (high) advisories.
 
+## Walmart scraper auto-start
+
+The Walmart scraper is a SEPARATE sibling repo (`../walmart-scraper`), not part of this repo - never modify it from here.
+It exposes `npm run api` (port 8090) and ships its own `Dockerfile` + `/health` healthcheck; the backend reaches it over HTTP via `WALMART_SCRAPER_URL` (default `http://localhost:8090`, see `backend/src/services/providers/walmart-scraper.ts`).
+
+It auto-starts with the app in BOTH run paths:
+- Local: `npm run dev` includes `npm run scraper`, which runs the guard wrapper `scripts/start-scraper.mjs`. The wrapper resolves `WALMART_SCRAPER_DIR` (default `../walmart-scraper`), and if the dir or its `node_modules` is missing it prints a `[scraper] skipped: ...` warning and exits 0 so backend/frontend keep running. It deliberately does NOT run `npm install` (one-time `setup:scraper` does that). Do not add a `concurrently --kill-others*` flag - it would let a scraper exit take down the dev group.
+- Docker: the `walmart-scraper` compose service builds from `${WALMART_SCRAPER_CONTEXT:-../walmart-scraper}`; `backend` `depends_on` it with `condition: service_healthy` and gets `WALMART_SCRAPER_URL=http://walmart-scraper:8090`.
+
+The scraper is an optional auto-started dependency: manual price entry and app boot must never hard-require it.
+
 ## Frontend bundle size (Three.js / Vanta)
 
 Three.js + Vanta.js are heavy (~625 kB combined) and power only the visual-only fog in `frontend/src/components/VantaBackground.tsx`.
