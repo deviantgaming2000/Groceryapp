@@ -44,3 +44,24 @@ The canonical category set is: `Produce`, `Meat`, `Dairy`, `Pantry`, `Frozen`, `
 When adding an item-writing path, trim whitespace and map onto that set rather than letting a new variant in.
 
 Items imported from a provider land in a category derived from the provider payload, which can be junk (a Walmart import once produced the literal category `"Imported"`) - map imported items onto the canonical set at import time.
+
+## Bulk price lookup (`POST /api/bulk-find-prices`)
+
+This endpoint is long-running by design: it walks every list item against every configured provider with a 300ms pause between upstream calls, under a hard `MAX_CALLS = 80` ceiling.
+A 44-item list across two providers takes ~100s and hits that ceiling, so the last items come back `status: "skipped"` - the cap is real and reported per item, so surface it rather than presenting a partial run as complete.
+
+`nginx.conf` must therefore keep a raised `proxy_read_timeout` on `location /api/` (600s).
+With the 60s default the browser got a 504 while the backend kept running and kept writing prices, which is the worst possible shape: the UI says failed, the data changes anyway.
+A background job with a progress poll is the proper fix; the raised timeout is a stopgap.
+
+Two data hazards to respect when touching this path:
+
+`upsertPrice` writes imported entries with `confidence: "confirmed"` and a current `recordedAt`, so an imported price outranks a manual one in the comparison for the same item and store.
+A single bad match silently replaces a correct hand-entered figure - a verified $173.14 list once reported $614.76 this way.
+Manual entries are not destroyed (upsert keys on `source` + `externalProductId`), just shadowed, so deactivating the imported rows restores the previous state.
+
+`upsertPrice` updates matching rows **in place**, overwriting the previous price with no history.
+For those rows a "just undo the run" cleanup cannot restore the old value - it is already gone.
+
+Product matching must stay gated on package fit (`pickBestProduct`'s `need` argument).
+Title overlap alone once matched a 10 lb need to a 1 lb package, which `packagesNeeded` ceilinged into a $138 line for an $8.72 bag.
