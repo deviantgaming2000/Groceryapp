@@ -47,12 +47,18 @@ Items imported from a provider land in a category derived from the provider payl
 
 ## Bulk price lookup (`POST /api/bulk-find-prices`)
 
-This endpoint is long-running by design: it walks every list item against every configured provider with a 300ms pause between upstream calls, under a hard `MAX_CALLS = 80` ceiling.
-A 44-item list across two providers takes ~100s and hits that ceiling, so the last items come back `status: "skipped"` - the cap is real and reported per item, so surface it rather than presenting a partial run as complete.
+This runs as a **background job**, not a synchronous request: `POST` returns `202 {jobId}` immediately and `GET /api/bulk-find-prices/:jobId` reports progress and the final summary.
+Jobs are held in memory (single-user app; an interrupted run is re-run, not resumed) and only the last 10 are kept.
+Do not convert it back to a blocking request: it walks every list item against every provider with a 300ms pause between upstream calls, so it runs for minutes, and holding the response open meant a proxy timeout abandoned the client while the backend kept writing prices unseen - the UI said failed while the data changed anyway.
 
-`nginx.conf` must therefore keep a raised `proxy_read_timeout` on `location /api/` (600s).
-With the 60s default the browser got a 504 while the backend kept running and kept writing prices, which is the worst possible shape: the UI says failed, the data changes anyway.
-A background job with a progress poll is the proper fix; the raised timeout is a stopgap.
+`nginx.conf` still carries a raised `proxy_read_timeout` on `location /api/` (600s) as a backstop; the job is what actually fixes it.
+
+A provider that returns empty results five times in a row is marked **degraded** and its remaining items are skipped.
+This exists because the Walmart scraper answers `200 {"count":0,"results":[]}` when it hits Walmart's bot wall, which is indistinguishable from a genuine no-match on any single call but unmistakable across a run.
+Without it, a blocked provider burned the whole `MAX_CALLS = 80` budget on phantom "no match" results and starved the providers that were working.
+Do not try to evade the bot wall; back off and report it.
+
+The per-run `MAX_CALLS = 80` ceiling is still real. When it is hit, `limitReached` is set and the remaining items come back `status: "skipped"` - surface that rather than presenting a partial run as complete.
 
 Two data hazards to respect when touching this path:
 
