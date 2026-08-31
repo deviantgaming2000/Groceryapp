@@ -30,3 +30,18 @@ describe("pickBestProduct size gating", () => {
     expect(pickBestProduct("Bratwurst", [p("Bratwurst", 4.92, "14 oz")], { quantity: 5, unit: "count" })).toBeNull();
   });
 });
+
+describe("pickBestProduct specificity", () => {
+  const q = (title: string, price: number, size: string) =>
+    ({ source: "t", externalProductId: title, title, size, price, regularPrice: price, promoPrice: null,
+       unitPrice: null, currency: "USD", available: true, couponEligible: false, couponData: null,
+       lastUpdated: "" }) as any;
+
+  it("prefers the plainer title over a heavily qualified one", () => {
+    const got = pickBestProduct("Chicken Leg Quarters", [
+      q("Private Selection Classic Seasoned Roasted Chicken Leg Quarters Cold", 4.99, "1 lb"),
+      q("Chicken Leg Quarters", 8.72, "10 lb")
+    ], { quantity: 10, unit: "lb" });
+    expect(got?.title).toBe("Chicken Leg Quarters");
+  });
+});

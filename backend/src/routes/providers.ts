@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { getDefaultUserId, prisma } from "../lib/prisma.js";
 import { packagesNeeded } from "../services/units.js";
 import { getProvider, providers as providerRegistry, GroceryProvider, NormalizedLocation, NormalizedProduct, ProviderError } from "../services/providers/index.js";
@@ -35,14 +36,24 @@ export function pickBestProduct(
   const candidates = need ? products.filter((p) => packageFits(p, need)) : products;
   let best: NormalizedProduct | null = null;
   let bestScore = 0;
+  let bestExtra = Infinity;
   for (const p of candidates) {
     if (p.price == null) continue;
     const toks = tokenize(p.title);
     if (!toks.length) continue;
     const overlap = toks.filter((t) => want.has(t)).length / want.size;
-    // Prefer better name overlap; break ties on lower price.
-    if (overlap > bestScore || (overlap === bestScore && best && (p.price ?? Infinity) < (best.price ?? Infinity))) {
+    // Words in the title that the search term did not ask for. A plain
+    // "Chicken Leg Quarters" should beat "Private Selection Classic Seasoned
+    // Roasted Chicken Leg Quarters Cold", which scores the same on overlap
+    // but is a different product entirely.
+    const extra = toks.filter((t) => !want.has(t)).length;
+    const better =
+      overlap > bestScore ||
+      (overlap === bestScore && extra < bestExtra) ||
+      (overlap === bestScore && extra === bestExtra && best !== null && (p.price ?? Infinity) < (best.price ?? Infinity));
+    if (better) {
       bestScore = overlap;
+      bestExtra = extra;
       best = p;
     }
   }
@@ -409,62 +420,119 @@ export async function providerRoutes(app: FastifyInstance) {
 
     const MAX_CALLS = 80; // hard ceiling per run across all stores
     const DELAY_MS = 300; // pause between upstream calls
-    let calls = 0;
-    const summary: any[] = [];
+    // A provider that answers "no results" over and over is not finding nothing -
+    // it is degraded (the Walmart scraper returns an empty 200 when it hits a bot
+    // wall). Stop asking after this many in a row so the call budget is left for
+    // providers that are actually working, and say so in the summary.
+    const EMPTY_STREAK_LIMIT = 5;
 
-    for (const entry of active) {
-      const loc = await entry.provider.getLocation(entry.locationId).catch(() => null);
-      if (!loc) {
-        summary.push({ provider: entry.id, error: "Selected store not found." });
-        continue;
-      }
-      const store = await ensureLocalStore(userId, entry.id, loc);
-      const cache = new Map<string, NormalizedProduct[]>();
-      const itemResults: any[] = [];
+    const job: BulkJob = {
+      id: randomUUID(),
+      status: "running",
+      startedAt: new Date().toISOString(),
+      list: list.name,
+      totalItems: list.items.length,
+      processed: 0,
+      apiCalls: 0,
+      stores: [],
+      limitReached: false
+    };
+    rememberJob(job);
 
-      for (const li of list.items) {
-        const term = li.groceryItem.name;
-        if (calls >= MAX_CALLS) {
-          itemResults.push({ item: term, status: "skipped", reason: "call limit reached" });
-          continue;
-        }
-        const cacheKey = term.toLowerCase();
-        let products = cache.get(cacheKey);
-        if (!products) {
-          try {
-            calls++;
-            products = await entry.provider.searchProducts({ term, limit: 5, locationId: entry.locationId });
-            cache.set(cacheKey, products);
-            await sleep(DELAY_MS);
-          } catch (e) {
-            itemResults.push({ item: term, status: "error", reason: e instanceof ProviderError ? e.message : "search failed" });
+    // Run detached: the caller polls GET /bulk-find-prices/:jobId for progress.
+    void (async () => {
+      try {
+        let calls = 0;
+        for (const entry of active) {
+          const loc = await entry.provider.getLocation(entry.locationId).catch(() => null);
+          if (!loc) {
+            job.stores.push({ provider: entry.id, error: "Selected store not found." });
             continue;
           }
+          const store = await ensureLocalStore(userId, entry.id, loc);
+          const cache = new Map<string, NormalizedProduct[]>();
+          const itemResults: any[] = [];
+          let emptyStreak = 0;
+          let degraded: string | null = null;
+
+          for (const li of list.items) {
+            const term = li.groceryItem.name;
+            if (degraded) {
+              itemResults.push({ item: term, status: "skipped", reason: degraded });
+              continue;
+            }
+            if (calls >= MAX_CALLS) {
+              job.limitReached = true;
+              itemResults.push({ item: term, status: "skipped", reason: "call limit reached" });
+              continue;
+            }
+            const cacheKey = term.toLowerCase();
+            let products = cache.get(cacheKey);
+            if (!products) {
+              try {
+                calls++;
+                job.apiCalls = calls;
+                products = await entry.provider.searchProducts({ term, limit: 5, locationId: entry.locationId });
+                cache.set(cacheKey, products);
+                await sleep(DELAY_MS);
+              } catch (e) {
+                itemResults.push({ item: term, status: "error", reason: e instanceof ProviderError ? e.message : "search failed" });
+                continue;
+              } finally {
+                job.processed++;
+              }
+              emptyStreak = products.length ? 0 : emptyStreak + 1;
+              if (emptyStreak >= EMPTY_STREAK_LIMIT) {
+                degraded = `${entry.id} returned no results ${emptyStreak} times in a row - it looks blocked or unavailable, so the rest were skipped.`;
+                itemResults.push({ item: term, status: "skipped", reason: degraded });
+                continue;
+              }
+            } else {
+              job.processed++;
+            }
+            const localProducts = products.filter((p) => p.localInStock !== false);
+            const best = pickBestProduct(term, localProducts, {
+              quantity: Number(li.quantityNeeded),
+              unit: li.unitType as UnitType
+            });
+            if (!best) {
+              itemResults.push({ item: term, status: "not_found" });
+              continue;
+            }
+            const price = await upsertPrice(userId, li.groceryItemId, store.id, best);
+            itemResults.push({ item: term, status: "added", product: best.title, price: best.price, priceId: price.id });
+          }
+
+          job.stores.push({
+            provider: entry.id,
+            store: store.name,
+            added: itemResults.filter((r) => r.status === "added").length,
+            notFound: itemResults.filter((r) => r.status === "not_found").length,
+            skipped: itemResults.filter((r) => r.status === "skipped").length,
+            errors: itemResults.filter((r) => r.status === "error").length,
+            degraded,
+            items: itemResults
+          });
         }
-        // Auto-import only locally-stocked items (drops ship-only warehouse/marketplace).
-        // Providers without fulfillment data (Kroger) leave localInStock undefined → kept.
-        const localProducts = products.filter((p) => p.localInStock !== false);
-        const best = pickBestProduct(term, localProducts, {
-          quantity: Number(li.quantityNeeded),
-          unit: li.unitType as UnitType
-        });
-        if (!best) {
-          itemResults.push({ item: term, status: "not_found" });
-          continue;
-        }
-        const price = await upsertPrice(userId, li.groceryItemId, store.id, best);
-        itemResults.push({ item: term, status: "added", product: best.title, price: best.price, priceId: price.id });
+        job.status = "done";
+      } catch (e) {
+        job.status = "error";
+        job.error = e instanceof Error ? e.message : "Bulk lookup failed";
+        request.log.error(e);
+      } finally {
+        job.finishedAt = new Date().toISOString();
       }
+    })();
 
-      summary.push({
-        provider: entry.id,
-        store: store.name,
-        added: itemResults.filter((r) => r.status === "added").length,
-        items: itemResults
-      });
-    }
+    return reply.code(202).send({ jobId: job.id, status: job.status, totalItems: job.totalItems, list: job.list });
+  });
 
-    return { list: list.name, totalItems: list.items.length, apiCalls: calls, stores: summary };
+  // Poll a bulk run. Returns the same shape while running and when finished.
+  app.get("/bulk-find-prices/:jobId", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const job = bulkJobs.get(jobId);
+    if (!job) return reply.code(404).send({ error: "That lookup is no longer available. Start a new one.", code: "not_found" });
+    return job;
   });
 }
 
@@ -501,6 +569,40 @@ function derivePackage(product: NormalizedProduct): { quantity: number; unit: Un
     if (Number.isFinite(qty) && qty > 0) return { quantity: Number(qty.toFixed(2)), unit: sized.unit };
   }
   return sized;
+}
+
+
+/**
+ * Bulk lookups run for minutes (every list item, every store, paced to stay gentle
+ * on the upstreams). Holding an HTTP request open that long is fragile - a proxy
+ * timeout used to abandon the response while the run kept writing prices unseen.
+ * So the POST starts a job and returns immediately; callers poll for progress.
+ * In-memory is sufficient: this is a single-user app and an interrupted run is
+ * meant to be re-run, not resumed.
+ */
+interface BulkJob {
+  id: string;
+  status: "running" | "done" | "error";
+  startedAt: string;
+  finishedAt?: string;
+  list: string;
+  totalItems: number;
+  processed: number;
+  apiCalls: number;
+  stores: any[];
+  limitReached: boolean;
+  error?: string;
+}
+const bulkJobs = new Map<string, BulkJob>();
+const BULK_JOB_KEEP = 10;
+
+function rememberJob(job: BulkJob) {
+  bulkJobs.set(job.id, job);
+  // Keep only the most recent handful so a long-lived process does not grow.
+  const stale = [...bulkJobs.values()]
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+    .slice(0, Math.max(0, bulkJobs.size - BULK_JOB_KEEP));
+  for (const s of stale) bulkJobs.delete(s.id);
 }
 
 async function upsertPrice(

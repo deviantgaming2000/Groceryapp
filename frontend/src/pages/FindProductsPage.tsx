@@ -117,27 +117,53 @@ export function FindProductsPage() {
   const [bulkListId, setBulkListId] = useState("");
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkResult, setBulkResult] = useState<any | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<any | null>(null);
 
   const loadItems = () => api<AppItem[]>("/api/items").then(setItems).catch(() => {});
   const loadLists = () => api<any[]>("/api/lists").then((l) => setLists(l.filter((x) => x.isActive !== false))).catch(() => {});
   useEffect(() => { void loadItems(); void loadLists(); }, []);
 
+  // The lookup runs as a background job on the server (it takes minutes), so start
+  // it, then poll for progress instead of holding one long request open.
   async function runBulk() {
     if (!bulkListId) return;
     setError("");
     setMessage("");
     setBulkResult(null);
+    setBulkProgress(null);
     setBulkRunning(true);
     try {
-      const res = await api<any>("/api/bulk-find-prices", { method: "POST", body: JSON.stringify({ listId: bulkListId }) });
-      setBulkResult(res);
-      const added = (res.stores ?? []).reduce((sum: number, s: any) => sum + (s.added ?? 0), 0);
-      setMessage(`Looked up ${res.totalItems} item(s) across ${res.stores?.length ?? 0} store(s) — added ${added} price(s) using ${res.apiCalls} API call(s).`);
+      const started = await api<any>("/api/bulk-find-prices", { method: "POST", body: JSON.stringify({ listId: bulkListId }) });
+      const job = await pollBulkJob(started.jobId, (p) => setBulkProgress(p));
+      setBulkResult(job);
+      if (job.status === "error") {
+        setError(job.error || "The lookup failed part-way through.");
+      } else {
+        const added = (job.stores ?? []).reduce((sum: number, s: any) => sum + (s.added ?? 0), 0);
+        const skipped = (job.stores ?? []).reduce((sum: number, s: any) => sum + (s.skipped ?? 0), 0);
+        setMessage(
+          `Looked up ${job.totalItems} item(s) across ${job.stores?.length ?? 0} store(s) — added ${added} price(s) using ${job.apiCalls} API call(s).` +
+          (skipped ? ` ${skipped} item(s) were skipped.` : "") +
+          (job.limitReached ? " The per-run API call limit was reached, so some items were not looked up." : "")
+        );
+      }
       await loadItems();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not auto-fill prices");
     } finally {
       setBulkRunning(false);
+      setBulkProgress(null);
+    }
+  }
+
+  async function pollBulkJob(jobId: string, onProgress: (job: any) => void): Promise<any> {
+    // Poll until the server reports the run finished. No client-side deadline:
+    // the job owns its own lifetime, and giving up here would only hide it.
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const job = await api<any>(`/api/bulk-find-prices/${jobId}`);
+      onProgress(job);
+      if (job.status !== "running") return job;
     }
   }
 
@@ -335,7 +361,11 @@ export function FindProductsPage() {
               </select>
             </label>
             <button type="button" disabled={!bulkListId || bulkRunning} onClick={runBulk}>
-              {bulkRunning ? "Looking up…" : "Find prices across stores"}
+              {bulkRunning
+                ? bulkProgress
+                  ? `Looking up… ${bulkProgress.processed}/${bulkProgress.totalItems * (bulkProgress.stores?.length || 1)} (${bulkProgress.apiCalls} calls)`
+                  : "Looking up…"
+                : "Find prices across stores"}
             </button>
           </div>
         </div>
@@ -349,7 +379,15 @@ export function FindProductsPage() {
                   <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--danger, #f88)" }}>{s.error}</p>
                 ) : (
                   <>
-                    <p style={{ margin: "4px 0 8px", fontSize: 13 }}>{s.added} of {bulkResult.totalItems} matched</p>
+                    <p style={{ margin: "4px 0 8px", fontSize: 13 }}>
+                      {s.added} of {bulkResult.totalItems} matched
+                      {s.notFound ? ` · ${s.notFound} no match` : ""}
+                      {s.skipped ? ` · ${s.skipped} skipped` : ""}
+                      {s.errors ? ` · ${s.errors} error${s.errors === 1 ? "" : "s"}` : ""}
+                    </p>
+                    {s.degraded && (
+                      <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "var(--warn, #fc8)" }}>{s.degraded}</p>
+                    )}
                     <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12.5, maxHeight: 220, overflow: "auto" }}>
                       {(s.items ?? []).map((it: any, idx: number) => (
                         <li key={idx} style={{ color: it.status === "added" ? "var(--ink)" : "var(--ink-soft)" }}>
