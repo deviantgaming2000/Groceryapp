@@ -26,3 +26,21 @@ Three.js + Vanta.js are heavy (~625 kB combined) and power only the visual-only 
 They MUST be pulled in via dynamic `import()` inside the component's effect, never as static top-level imports.
 Static imports pull Three into the main entry chunk (~924 kB, over Vite's 500 kB advisory); the dynamic import keeps the entry chunk ~298 kB and emits Three/Vanta as separate async chunks that load after first paint.
 The remaining Vite size warning refers only to the deferred `three.module` vendor chunk, which is inherent to Three.js and not the blocking entry chunk.
+
+## Deployment and the MCP server
+
+The app is deployed with Docker Compose; the `frontend` nginx container publishes `${APP_PORT:-8080}:80` and proxies `/api` to the `backend` container, which is `expose`-only and never reachable directly from outside.
+So the only externally useful port is `APP_PORT`, and `GET /api/health/db` is the quickest end-to-end check that nginx, Fastify, and Postgres are all healthy.
+There is no login screen: the app runs in single-user mode keyed off `SINGLE_USER_EMAIL`, so any host-level credentials are for the server, not the app.
+
+`mcp-server/` is registered with MCP clients as a stdio server pointed at `mcp-server/dist/index.js`, with `GROCERY_API_URL` naming a running instance and `FLIPP_POSTAL_CODE` required by the `flipp_*` tools (they silently search an empty postal code without it).
+It runs the compiled output and `mcp-server/dist/` is gitignored, so editing `src/index.ts` alone changes nothing: rebuild with `npm run build --workspace mcp-server` and restart the MCP client.
+
+## Item naming and categories
+
+Item `name` and `category` are free-text, and nothing in the API trims or canonicalizes them.
+Trailing spaces and near-miss categories therefore accumulate silently and fragment category grouping and name matching - a real occurrence was `"Dariy "`, `"meat"` vs `"Meat"`, and `"Drink"` vs `"Drinks"` all coexisting.
+The canonical category set is: `Produce`, `Meat`, `Dairy`, `Pantry`, `Frozen`, `Drinks`, `Household`, `Spirits`.
+When adding an item-writing path, trim whitespace and map onto that set rather than letting a new variant in.
+
+Items imported from a provider land in a category derived from the provider payload, which can be junk (a Walmart import once produced the literal category `"Imported"`) - map imported items onto the canonical set at import time.

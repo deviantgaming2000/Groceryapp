@@ -1,6 +1,11 @@
 # Grocery Price Checker
 
-A manual-first grocery price comparison app. It does not scrape grocery websites, does not invent prices, and does not pretend to know store pricing. Every grocery price is entered by you unless a real API integration is added later.
+A manual-first grocery price comparison app.
+It never invents prices and never pretends to know store pricing: every price is either entered by you or pulled from a named, inspectable source that is recorded on the price entry.
+
+Manual entry is always the baseline and always works.
+On top of that, optional integrations can fetch real prices: the Kroger/Fry's API, Walmart via SerpApi, a best-effort Walmart store scraper, and weekly flyer deals via Flipp.
+Each is opt-in, each requires a key or explicit action, and none of them run unless you configure them.
 
 The app answers:
 
@@ -14,6 +19,7 @@ The app answers:
 - ORM: Prisma
 - Optional maps: Google Distance Matrix API
 - Auth mode: single-user local mode by default
+- Optional MCP server for conversational control (`mcp-server/`)
 
 ## Interface
 
@@ -150,7 +156,11 @@ For local development, `docker compose up -d postgres` exposes Postgres on `127.
 
 ## Price Rules
 
-Prices are manual. No scraping is performed.
+Prices are manual by default.
+Every price entry records its `source` (`manual`, `kroger`, `walmart`, or a deals provider), so an imported price is always distinguishable from one you typed in.
+
+The optional Walmart scraper (`backend/src/services/providers/walmart-scraper.ts`) is best-effort and rate-limited, caches search results for roughly a day to stay clear of bot detection, and is expected to fail sometimes.
+Treat it as a convenience, not a source of truth.
 
 Each price entry includes item, store, price, package quantity/unit, brand, sale/coupon flags, tax flag, recorded date, optional expiration, confidence level, and notes.
 
@@ -281,6 +291,66 @@ web app under **Settings → API Keys** — no `.env` editing or restart require
 
 Endpoints: `GET /api/credentials`, `PUT /api/credentials/:provider`, `DELETE /api/credentials/:provider`.
 
+## Weekly Deals And Flyers
+
+Beyond per-product lookups, the app can pull weekly ad and flyer deals and match them against a grocery list.
+
+Deals come from a provider registry (`backend/src/services/deals/`), so sources are pluggable:
+
+- `flipp` - weekly flyers via Flipp, keyed by postal code. No API key required.
+- `kroger` - promo/loyalty pricing from the Kroger Products API. Uses your Kroger credentials.
+- `safeway` - Safeway weekly ad.
+- `manual` - deals you enter yourself.
+
+Open **Deals** to search across providers, or **Flyers** to browse a specific store's flyer page by page.
+`POST /api/deals/match-list` scores the current deals against a grocery list so you can see which of the things you actually buy are on sale this week.
+A matched deal can be saved as a coupon with `POST /api/deals/save-coupon`, after which the comparison engine applies it like any other coupon.
+
+Endpoints: `GET /api/deals/providers`, `/deals/search`, `/deals/weekly-ad`, `/deals/coupons`, `/deals/flyers`, `/deals/flyers/:id`.
+
+### Flyer Vision OCR (optional, fully local)
+
+Many flyer items are images with the price baked into the picture, so there is no text to read.
+For those, the app can hand the image to a **local** vision model and ask it to read off the price and deal text.
+
+- Configure it under **Settings -> API Keys -> Local Vision OCR (Ollama)** with your Ollama base URL (default model `llama3.2-vision`).
+- Both Ollama-style and OpenAI-style vision endpoints are supported; the style is auto-detected from the base URL.
+- Images go only to the server you configure. Nothing is sent to a third party.
+- Endpoints: `GET /api/deals/vision-status`, `POST /api/deals/read-image`. Results are cached per flyer item in `flyer_item_reads`.
+
+## MCP Server
+
+`mcp-server/` (package `grocery-mcp`) exposes the app to Claude and other MCP clients as 22 tools, so you can manage the whole thing conversationally: "add milk at $3.49 to Fry's", "compare my weekly list", "what's on sale at Safeway".
+
+It is a thin stdio client over this app's own REST API - it holds no database connection and no credentials of its own.
+
+Build it, then register it with your MCP client:
+
+```bash
+npm run build --workspace mcp-server
+```
+
+```json
+{
+  "grocery": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["/absolute/path/to/grocery-price-checker/mcp-server/dist/index.js"],
+    "env": {
+      "GROCERY_API_URL": "http://YOUR_SERVER:8080",
+      "FLIPP_POSTAL_CODE": "85194"
+    }
+  }
+}
+```
+
+`GROCERY_API_URL` points at a running instance (Docker or local dev).
+`FLIPP_POSTAL_CODE` is required by the three `flipp_*` tools; without it they search with an empty postal code and return nothing useful.
+
+It runs the compiled `dist/`, which is gitignored - after editing `mcp-server/src/index.ts` you must rebuild **and** restart the MCP client before changes take effect.
+
+Tool groups: stores/items, prices, lists, coupons, and compare/dashboard/Flipp.
+
 ## CSV Import / Export
 
 Templates:
@@ -322,4 +392,12 @@ Tests cover unit price math, bulk leftovers, driving cost, incomplete store tota
 
 ## Privacy
 
-The app stores data locally in PostgreSQL. It does not scrape stores and does not send personal data to third parties except store/home addresses when you explicitly calculate distance with Google Maps enabled.
+The app stores data locally in PostgreSQL.
+
+Data leaves your machine only when you explicitly use an optional integration:
+
+- Store and home addresses go to Google when you calculate distance with Google Maps enabled.
+- Search terms go to Kroger, SerpApi, or Flipp when you use those product/deal searches.
+- Flyer images go to your own local Ollama instance when you use vision OCR - not to a third party.
+
+No personal data is sent anywhere else, and every one of these requires you to configure a key or press a button.
