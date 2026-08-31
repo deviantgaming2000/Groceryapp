@@ -1,7 +1,10 @@
 export type UnitType = "each" | "lb" | "oz" | "gallon" | "quart" | "pint" | "fl_oz" | "pack" | "case" | "count";
 
 const toBase: Record<UnitType, { unit: UnitType; factor: number }> = {
-  each: { unit: "each", factor: 1 },
+  // "each" and "count" are the same idea - one discrete thing - so they share
+  // a base unit. Keeping them apart made a "4 count" need unsatisfiable by an
+  // "each" price, which surfaced as a phantom "missing price data".
+  each: { unit: "count", factor: 1 },
   count: { unit: "count", factor: 1 },
   pack: { unit: "count", factor: 1 },
   case: { unit: "count", factor: 1 },
