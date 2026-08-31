@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { getDefaultUserId, prisma } from "../lib/prisma.js";
+import { packagesNeeded } from "../services/units.js";
 import { getProvider, providers as providerRegistry, GroceryProvider, NormalizedLocation, NormalizedProduct, ProviderError } from "../services/providers/index.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -8,13 +9,33 @@ const STOP = new Set(["the", "and", "with", "for", "size", "each", "pack", "coun
 function tokenize(s: string): string[] {
   return (s || "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2 && !STOP.has(t));
 }
+/**
+ * A match must be able to actually satisfy what the list asks for. Name overlap
+ * alone once matched a 10 lb need to a 1 lb package, which packagesNeeded()
+ * then ceilinged to 10+ packages and reported as a ~$138 line for an $8.72 bag.
+ * So a candidate is rejected when its package cannot serve the need at all
+ * (incompatible units) or would need an implausible number of packages.
+ */
+const MAX_PACKAGES_PER_ITEM = 6;
+
+function packageFits(product: NormalizedProduct, need: { quantity: number; unit: UnitType }): boolean {
+  const pkg = derivePackage(product);
+  const needed = packagesNeeded(need.quantity, need.unit, pkg.quantity, pkg.unit);
+  return needed !== null && needed.packageCount <= MAX_PACKAGES_PER_ITEM;
+}
+
 /** Pick the product whose title best overlaps the search term (must have a price). */
-function pickBestProduct(term: string, products: NormalizedProduct[]): NormalizedProduct | null {
+export function pickBestProduct(
+  term: string,
+  products: NormalizedProduct[],
+  need?: { quantity: number; unit: UnitType }
+): NormalizedProduct | null {
   const want = new Set(tokenize(term));
   if (!want.size) return null;
+  const candidates = need ? products.filter((p) => packageFits(p, need)) : products;
   let best: NormalizedProduct | null = null;
   let bestScore = 0;
-  for (const p of products) {
+  for (const p of candidates) {
     if (p.price == null) continue;
     const toks = tokenize(p.title);
     if (!toks.length) continue;
@@ -423,7 +444,10 @@ export async function providerRoutes(app: FastifyInstance) {
         // Auto-import only locally-stocked items (drops ship-only warehouse/marketplace).
         // Providers without fulfillment data (Kroger) leave localInStock undefined → kept.
         const localProducts = products.filter((p) => p.localInStock !== false);
-        const best = pickBestProduct(term, localProducts);
+        const best = pickBestProduct(term, localProducts, {
+          quantity: Number(li.quantityNeeded),
+          unit: li.unitType as UnitType
+        });
         if (!best) {
           itemResults.push({ item: term, status: "not_found" });
           continue;
