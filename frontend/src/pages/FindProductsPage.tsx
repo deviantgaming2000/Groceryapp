@@ -39,7 +39,8 @@ function guessUnit(size?: string): string {
 const PROVIDERS = [
   { id: "kroger", label: "Kroger / Fry's" },
   { id: "walmart", label: "Walmart" },
-  { id: "walmart-scraper", label: "Walmart (self-hosted)" }
+  { id: "walmart-scraper", label: "Walmart (self-hosted)" },
+  { id: "safeway", label: "Safeway (self-hosted)" }
 ] as const;
 type ProviderId = (typeof PROVIDERS)[number]["id"];
 
