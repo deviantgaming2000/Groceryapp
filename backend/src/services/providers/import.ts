@@ -1,4 +1,4 @@
-import { getDefaultUserId, prisma } from "../../lib/prisma.js";
+import { prisma } from "../../lib/prisma.js";
 import { NormalizedProduct } from "./index.js";
 
 export const UNIT_TYPES = ["each", "lb", "oz", "gallon", "quart", "pint", "fl_oz", "pack", "case", "count"] as const;

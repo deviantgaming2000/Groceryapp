@@ -152,9 +152,17 @@ async function execute(
           continue;
         }
 
-        await upsert(userId, entry.groceryItemId, entry.storeId, match, entry.id);
-        await mark(entry.id, "ok");
-        stats.refreshed += 1;
+        try {
+          await upsert(userId, entry.groceryItemId, entry.storeId, match, entry.id);
+          await mark(entry.id, "ok");
+          stats.refreshed += 1;
+        } catch {
+          // A write failure (dropped connection, constraint violation) says nothing
+          // about the provider's search results being bad, so it does not feed
+          // failStreak - only degrade on repeated search failures, per the rule above.
+          stats.failed += 1;
+          await mark(entry.id, "error");
+        }
       }
     }
   } catch (error) {

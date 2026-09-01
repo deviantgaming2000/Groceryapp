@@ -115,6 +115,27 @@ describe("refresh engine", () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  it("marks the entry error and keeps going when the price write itself throws", async () => {
+    (prisma.priceEntry.findMany as any).mockResolvedValue([
+      linkedEntry({ id: "pe-1" }),
+      linkedEntry({ id: "pe-2", groceryItem: { id: "gi-2", name: "Item 2" } })
+    ]);
+    const provider = fakeProvider([fakeProduct({ price: 3.49 })]);
+    let calls = 0;
+    const upsert = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("db write failed");
+      return {} as any;
+    });
+    const run = await runToCompletion({ getProviderById: () => provider, sleep: async () => {}, upsert });
+
+    expect(run.status).toBe("done");
+    expect(run.providers[0].failed).toBe(1);
+    expect(run.providers[0].refreshed).toBe(1);
+    expect(prisma.priceEntry.update).toHaveBeenCalledWith({ where: { id: "pe-1" }, data: { lastRefreshStatus: "error" } });
+    expect(prisma.priceEntry.update).toHaveBeenCalledWith({ where: { id: "pe-2" }, data: { lastRefreshStatus: "ok" } });
+  });
+
   it("passes the staleHours cutoff into the findMany filter", async () => {
     const provider = fakeProvider([fakeProduct()]);
     await runToCompletion({ getProviderById: () => provider, sleep: async () => {} }, 24);
