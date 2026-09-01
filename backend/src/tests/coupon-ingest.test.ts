@@ -36,7 +36,7 @@ vi.mock("../lib/prisma.js", () => {
 });
 
 import { prisma } from "../lib/prisma.js";
-import { dealCouponFields, dealExternalId, ingestDealsAsCoupons } from "../services/coupon-ingest.js";
+import { dealCouponFields, dealExternalId, ingestDealsAsCoupons, runFlippCouponIngest } from "../services/coupon-ingest.js";
 import type { NormalizedDeal } from "../services/deals/types.js";
 
 const couponStore = (prisma as any).__coupons as any[];
@@ -132,5 +132,72 @@ describe("ingestDealsAsCoupons", () => {
     expect(summary.deactivated).toBe(1);
     expect(couponStore.find((c) => c.id === "c-old")!.isActive).toBe(false);
     expect(couponStore.find((c) => c.id === "manual-2")!.isActive).toBe(true);
+  });
+});
+
+describe("runFlippCouponIngest", () => {
+  beforeEach(() => {
+    couponStore.length = 0;
+    vi.clearAllMocks();
+  });
+
+  it("matches a deal's storeName to a tracked store and writes that store's id", async () => {
+    (prisma.store.findMany as any).mockResolvedValue([{ id: "st-1", name: "Safeway", zip: "94102" }]);
+    (prisma.groceryItem.findMany as any).mockResolvedValue([{ id: "gi-1", name: "Cheerios" }]);
+    const searchDeals = vi.fn(async () => [deal({ storeName: "Safeway" })]);
+
+    const summary = await runFlippCouponIngest({ searchDeals, sleep: async () => {} });
+
+    expect(summary.created).toBe(1);
+    const row = couponStore.find((c) => c.source === "flipp");
+    expect(row!.storeId).toBe("st-1");
+  });
+
+  it("skips a deal from a store the user does not track", async () => {
+    (prisma.store.findMany as any).mockResolvedValue([{ id: "st-1", name: "Safeway", zip: "94102" }]);
+    (prisma.groceryItem.findMany as any).mockResolvedValue([{ id: "gi-1", name: "Cheerios" }]);
+    const searchDeals = vi.fn(async () => [deal({ storeName: "Walmart" })]);
+
+    const summary = await runFlippCouponIngest({ searchDeals, sleep: async () => {} });
+
+    expect(summary.skipped).toBe(1);
+    expect(couponStore.filter((c) => c.source === "flipp")).toHaveLength(0);
+  });
+
+  it("never lets a tracked store whose name normalizes to empty match every deal", async () => {
+    // "!!!" strips down to the empty string under norm(); it must never stand in
+    // for "no filter" and swallow every deal regardless of its actual store name.
+    (prisma.store.findMany as any).mockResolvedValue([{ id: "st-empty", name: "!!!", zip: "94102" }]);
+    (prisma.groceryItem.findMany as any).mockResolvedValue([{ id: "gi-1", name: "Cheerios" }]);
+    const searchDeals = vi.fn(async () => [deal({ storeName: "Totally Untracked Store" })]);
+
+    const summary = await runFlippCouponIngest({ searchDeals, sleep: async () => {} });
+
+    expect(summary.skipped).toBe(1);
+    expect(couponStore.filter((c) => c.source === "flipp")).toHaveLength(0);
+  });
+
+  it("calls searchDeals exactly INGEST_MAX_CALLS times when zip x item combinations exceed the cap", async () => {
+    const stores = Array.from({ length: 5 }, (_, i) => ({ id: `st-${i}`, name: `Store${i}`, zip: `9410${i}` }));
+    const items = Array.from({ length: 10 }, (_, i) => ({ id: `gi-${i}`, name: `Item${i}` }));
+    (prisma.store.findMany as any).mockResolvedValue(stores);
+    (prisma.groceryItem.findMany as any).mockResolvedValue(items);
+    const searchDeals = vi.fn(async () => [] as NormalizedDeal[]);
+
+    await runFlippCouponIngest({ searchDeals, sleep: async () => {} });
+
+    expect(searchDeals).toHaveBeenCalledTimes(40);
+  });
+
+  it("links a deal matched to a grocery item onto the created coupon, with scope item", async () => {
+    (prisma.store.findMany as any).mockResolvedValue([{ id: "st-1", name: "Safeway", zip: "94102" }]);
+    (prisma.groceryItem.findMany as any).mockResolvedValue([{ id: "gi-1", name: "Cheerios" }]);
+    const searchDeals = vi.fn(async () => [deal({ storeName: "Safeway", productName: "Cheerios 12oz" })]);
+
+    await runFlippCouponIngest({ searchDeals, sleep: async () => {} });
+
+    const row = couponStore.find((c) => c.source === "flipp");
+    expect(row!.groceryItemId).toBe("gi-1");
+    expect(row!.scope).toBe("item");
   });
 });

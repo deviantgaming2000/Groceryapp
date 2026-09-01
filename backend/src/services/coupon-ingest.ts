@@ -143,7 +143,10 @@ export async function runFlippCouponIngest(
     storeIdFor: (deal) => {
       const key = norm(deal.storeName);
       if (!key) return null;
-      const store = stores.find((s) => norm(s.name).includes(key) || key.includes(norm(s.name)));
+      const store = stores.find((s) => {
+        const n = norm(s.name);
+        return n !== "" && (n.includes(key) || key.includes(n));
+      });
       return store?.id ?? null;
     },
     itemIdFor: (deal) => (deal as { matchedItemIds?: string[] }).matchedItemIds?.[0] ?? null
