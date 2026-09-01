@@ -15,6 +15,7 @@ import { dealRoutes } from "./routes/deals.js";
 import { dataRoutes } from "./routes/data.js";
 import { refreshRoutes } from "./routes/refresh.js";
 import { prisma } from "./lib/prisma.js";
+import { startNightlyScheduler } from "./services/scheduler.js";
 
 export function buildServer() {
   const app = Fastify({ logger: true });
@@ -84,5 +85,11 @@ export function buildServer() {
 
 const port = Number(process.env.PORT ?? 4000);
 if (process.env.NODE_ENV !== "test") {
-  buildServer().listen({ port, host: "0.0.0.0" });
+  buildServer()
+    .listen({ port, host: "0.0.0.0" })
+    .then(() => {
+      if (process.env.DISABLE_NIGHTLY !== "1") {
+        startNightlyScheduler();
+      }
+    });
 }
