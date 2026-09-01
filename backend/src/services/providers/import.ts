@@ -23,7 +23,7 @@ export function parseSize(size?: string): { quantity: number; unit: UnitType } {
 }
 
 /** Derive the package size for a price entry. For weight items where the store gives
- *  a per-unit price, the true package weight is price ÷ unit price — accurate even when
+ *  a per-unit price, the true package weight is price ÷ unit price - accurate even when
  *  the size string is a range (e.g. "12.3 - 28 lb") so the $/lb matches the store. */
 export function derivePackage(product: NormalizedProduct): { quantity: number; unit: UnitType } {
   const sized = parseSize(product.size);
