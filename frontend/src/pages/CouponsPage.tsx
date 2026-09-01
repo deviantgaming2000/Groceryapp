@@ -15,6 +15,11 @@ const couponTypeLabels: Record<CouponType, string> = {
   digital_coupon: "Digital Coupon"
 };
 
+function AutoCouponBadge({ source }: { source?: string }) {
+  if (!source || source === "manual") return null;
+  return <span className="source-badge promo" style={{ marginLeft: 6 }}>{source === "safeway-j4u" ? "Just4U" : "weekly ad"}</span>;
+}
+
 function promoDescription(coupon: any): string {
   if (coupon.couponType === "buy_x_get_y_free") {
     const limit = coupon.limitPerTransaction ? `, max ${coupon.limitPerTransaction}x` : "";
@@ -149,7 +154,7 @@ export function CouponsPage() {
             const expired = coupon.expiresAt ? new Date(coupon.expiresAt) < new Date() : false;
             return (
               <tr key={coupon.id} style={expired ? { opacity: 0.5 } : {}}>
-                <td>{coupon.name}</td>
+                <td>{coupon.name}<AutoCouponBadge source={coupon.source} /></td>
                 <td>{couponTypeLabels[coupon.couponType as CouponType] ?? coupon.couponType}</td>
                 <td>{coupon.scope}</td>
                 <td className="cheap">{promoDescription(coupon)}</td>
@@ -179,7 +184,7 @@ export function CouponsPage() {
               <tbody>
                 {coupons.filter((c) => !c.isActive).map((coupon) => (
                   <tr key={coupon.id}>
-                    <td>{coupon.name}</td>
+                    <td>{coupon.name}<AutoCouponBadge source={coupon.source} /></td>
                     <td>{couponTypeLabels[coupon.couponType as CouponType] ?? coupon.couponType}</td>
                     <td className="cheap">{promoDescription(coupon)}</td>
                     <td style={{ fontSize: 12 }}>{[coupon.groceryItem?.name, coupon.store?.name].filter(Boolean).join(" · ") || "Any"}</td>

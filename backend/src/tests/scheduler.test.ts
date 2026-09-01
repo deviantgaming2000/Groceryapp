@@ -3,11 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../lib/prisma.js", () => ({
   getDefaultUserId: vi.fn(async () => "user-1"),
   prisma: {
-    userSettings: { findUnique: vi.fn(async () => ({ autoRefreshHour: 3, autoRefreshEnabled: true })) }
+    userSettings: { findUnique: vi.fn(async () => ({ autoRefreshHour: 3, autoRefreshEnabled: true })) },
+    // Empty so the fire-and-forget coupon ingest triggered by the route below
+    // no-ops instead of reaching the network.
+    store: { findMany: vi.fn(async () => []) },
+    groceryItem: { findMany: vi.fn(async () => []) },
+    coupon: { updateMany: vi.fn(async () => ({ count: 0 })) }
   }
 }));
 
 import { msUntilNightly, startNightlyScheduler } from "../services/scheduler.js";
+import { buildServer } from "../server.js";
 
 describe("msUntilNightly", () => {
   it("targets today's hour when it is still ahead", () => {
@@ -51,5 +57,15 @@ describe("startNightlyScheduler", () => {
     expect(run).not.toHaveBeenCalled();
 
     setTimeoutSpy.mockRestore();
+  });
+});
+
+describe("POST /api/coupons/ingest/run", () => {
+  it("kicks off ingestion in the background and responds 202 immediately", async () => {
+    const app = buildServer();
+    const res = await app.inject({ method: "POST", url: "/api/coupons/ingest/run" });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ started: true });
+    await app.close();
   });
 });
