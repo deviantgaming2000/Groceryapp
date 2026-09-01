@@ -28,6 +28,19 @@ function quantityAsUnit(quantity: number, fromUnit: UnitType, toUnit: UnitType) 
   return (quantity * unitBase[fromUnit].factor) / unitBase[toUnit].factor;
 }
 
+interface RefreshRunSummary {
+  id: string;
+  status: "running" | "done" | "error";
+  trigger: "nightly" | "stale-view" | "manual";
+  startedAt: string;
+  finishedAt?: string;
+  totalEntries: number;
+  processed: number;
+  apiCalls: number;
+  providers: { provider: string; refreshed: number; unverified: number; failed: number; skipped: number; degraded: string | null }[];
+  error?: string;
+}
+
 function equivalentUnitPrice(price: any, item: any) {
   const packageUnit = price.packageUnit as UnitType;
   const itemUnit = item?.unitType as UnitType | undefined;
@@ -53,6 +66,7 @@ export function PricesPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [historyGroup, setHistoryGroup] = useState<{ item: any; prices: any[] } | null>(null);
+  const [refreshRun, setRefreshRun] = useState<RefreshRunSummary | null>(null);
   const load = () => Promise.all([api<any[]>("/api/items"), api<any[]>("/api/stores"), api<any[]>("/api/prices")]).then(([i, s, p]) => {
     setItems(i);
     setStores(s);
@@ -60,6 +74,34 @@ export function PricesPage() {
     if (!selectedItemId && i[0]) setSelectedItemId(i[0].id);
   });
   useEffect(() => { void load(); }, []);
+
+  // Kick off the stale-price auto-refresh once per page view, then poll the run
+  // until it finishes so the status line and unverified markers stay current.
+  // The run itself lives server-side, so this is purely observational - a
+  // remount just re-joins whatever run is already in progress.
+  useEffect(() => {
+    let timer: number | undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const run = await api<RefreshRunSummary | undefined>("/api/prices/refresh-runs/latest");
+        if (cancelled || !run) return;
+        setRefreshRun(run);
+        if (run.status === "running") {
+          timer = window.setTimeout(poll, 3000);
+          return;
+        }
+        await load();
+      } catch {
+        /* a network hiccup here just leaves the last known status in place */
+      }
+    };
+    api("/api/prices/refresh-stale", { method: "POST" }).then(poll).catch(() => {});
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const sortedItems = useMemo(() => [...items].sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`)), [items]);
   const sortedStores = useMemo(() => [...stores].sort((a, b) => a.name.localeCompare(b.name)), [stores]);
@@ -269,6 +311,18 @@ export function PricesPage() {
       </form>
       {error && <p className="error">{error}</p>}
       {message && <p className="warn">{message}</p>}
+      {refreshRun && (
+        <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--ink-soft)" }}>
+          {refreshRun.status === "running"
+            ? `Auto-updating prices… ${refreshRun.processed}/${refreshRun.totalEntries}`
+            : refreshRun.status === "error"
+            ? `Auto-update stopped: ${refreshRun.error ?? "unknown error"}`
+            : `Prices auto-updated ${new Date(refreshRun.startedAt).toLocaleString()}: ` +
+              (refreshRun.providers.length
+                ? refreshRun.providers.map((p) => `${p.provider} ${p.refreshed} updated${p.unverified ? `, ${p.unverified} couldn't verify` : ""}`).join(" · ")
+                : "no stale prices found")}
+        </p>
+      )}
       <div className="panel">
         <h2>Saved prices grouped by item</h2>
         <div className="toolbar">
@@ -320,6 +374,15 @@ export function PricesPage() {
                     <span className={`source-badge ${price.source}`} style={{ marginLeft: 6 }}>{price.source === "kroger" ? "Kroger" : price.source === "walmart" ? "Walmart" : price.source}</span>
                   )}
                   {price.couponEligible && <span className="source-badge promo" style={{ marginLeft: 6 }}>Deal</span>}
+                  {price.lastRefreshStatus === "not_found" && (
+                    <span
+                      className="source-badge stale"
+                      style={{ marginLeft: 6 }}
+                      title="The product could not be found at this store on the last auto-update. The shown price is the last verified one."
+                    >
+                      couldn't verify
+                    </span>
+                  )}
                 </td>
                 <td>{money(price.price)}</td>
                 <td>{price.packageQuantity} {price.packageUnit}</td>
