@@ -190,6 +190,7 @@ model PriceEntry {
   couponData        Json?    @map("coupon_data")
   rawApiData        Json?    @map("raw_api_data")
   lastSyncedAt      DateTime? @map("last_synced_at")
+  lastRefreshStatus String? @map("last_refresh_status")
   isActive        Boolean         @default(true) @map("is_active")
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
@@ -223,6 +224,8 @@ model Coupon {
   limitPerTransaction Int?        @map("limit_per_transaction")
   isActive            Boolean     @default(true) @map("is_active")
   notes               String?
+  source     String  @default("manual")
+  externalId String? @map("external_id")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
@@ -232,6 +235,7 @@ model Coupon {
   applications CouponApplication[]
 
   @@index([userId])
+  @@index([userId, source, externalId])
   @@map("coupons")
 }
 
@@ -263,6 +267,9 @@ model UserSettings {
   gasPricePerGallon  Decimal  @default(0) @map("gas_price_per_gallon") @db.Decimal(8, 2)
   roundTrip          Boolean  @default(true) @map("round_trip")
   costPerMileOverride Decimal? @map("cost_per_mile_override") @db.Decimal(8, 4)
+  autoRefreshEnabled Boolean @default(true)  @map("auto_refresh_enabled")
+  autoRefreshHour    Int     @default(3)     @map("auto_refresh_hour")
+  staleAfterHours    Int     @default(24)    @map("stale_after_hours")
   staleDays          Int      @default(14) @map("stale_days")
   veryStaleDays      Int      @default(30) @map("very_stale_days")
   googleMapsEnabled  Boolean  @default(false) @map("google_maps_enabled")
