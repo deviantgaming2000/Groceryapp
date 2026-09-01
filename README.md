@@ -340,6 +340,55 @@ For those, the app can hand the image to a **local** vision model and ask it to 
 - Images go only to the server you configure. Nothing is sent to a third party.
 - Endpoints: `GET /api/deals/vision-status`, `POST /api/deals/read-image`. Results are cached per flyer item in `flyer_item_reads`.
 
+## Auto-Refresh And Coupons
+
+On top of manual entry and on-demand searches, the app keeps provider-linked prices current and pulls in new coupons on its own, without you doing anything.
+
+### Nightly auto-refresh
+
+Once a night (default 3 AM server time, offset by a random 0-30 minute jitter so scrapers never see a fixed-time burst), the backend runs three steps in order, each awaiting the one before it:
+
+1. Refreshes every provider-linked price entry older than the stale threshold.
+2. Ingests Flipp weekly-ad deals as coupons.
+3. Ingests Safeway Just4U (J4U) offers as coupons.
+
+Each step is independently best-effort: a Flipp outage never blocks Safeway ingestion, and neither can ever fail or block the price refresh.
+Set `DISABLE_NIGHTLY=1` in the environment to turn the whole nightly scheduler off - useful for local dev, or a second instance that should not run it.
+
+The schedule itself is controlled by two `user_settings` columns: `auto_refresh_enabled` (default `true`) and `auto_refresh_hour` (default `3`).
+Both are visible in the response from `GET /api/settings`, but neither is exposed in the Settings UI or accepted by `PATCH /api/settings` yet - change them directly in the database if you need to.
+
+### Stale-on-view
+
+Opening the **Prices** page also triggers a refresh in the foreground.
+`POST /api/prices/refresh-stale` refreshes any provider-linked price older than `stale_after_hours` (another `user_settings` column, default 24, with the same caveat: not yet settable from the UI).
+The page polls `GET /api/prices/refresh-runs/latest` and shows a status line while the run is in progress, then a per-provider summary (for example "`kroger 3 updated, 1 couldn't verify`") once it finishes.
+A price the run could not verify is marked unverified rather than silently left as-is.
+
+### The exact-id rule
+
+Scraper-backed providers (Walmart, Safeway) cannot look a product up by id after a restart, so a refresh re-searches by the grocery item's name and only writes a price when a search result's `externalProductId` matches the price entry's stored `externalProductId` exactly.
+No match means the entry is marked `not_found` and left alone - the engine never guesses at a "close enough" product.
+That equality check, in `backend/src/services/refresh.ts`, is the one invariant the whole auto-refresh engine exists to protect.
+
+### Coupon sources and provenance
+
+Every automatically ingested coupon carries a `source` and an `externalId`, and ingestion always upserts on that pair, so re-running it never creates duplicates and never touches a coupon you entered by hand (`source: "manual"`).
+
+- `flipp` - weekly-ad deals matched against your grocery list, searched per tracked store's ZIP code.
+- `safeway-j4u` - Safeway "Just4U" digital coupons, read from the self-hosted Safeway scraper's `GET /coupons` endpoint.
+
+Each source's expiry sweep only ever deactivates coupons that source created; it can never deactivate a manual coupon or another source's coupon.
+The Coupons page shows a **Just4U** or **weekly ad** badge next to auto-ingested coupons so their origin is always visible; manual coupons show no badge.
+
+Trigger ingestion on demand with `POST /api/coupons/ingest/run` - it starts Flipp and Safeway J4U ingestion concurrently and returns `202` immediately, without waiting for either to finish.
+
+### Just4U is read-only
+
+The Safeway scraper's `/coupons` endpoint only reads the offers already visible to your signed-in Safeway account - it never "clips" (activates) anything into your account.
+If the scraper is down, the attached Chrome session is signed out, or Safeway changes its "For U" page, the fetch fails and `runSafewayCouponIngest` catches it and returns a zero-count summary instead of raising.
+A signed-out session or a broken scraper can therefore never fail the nightly run or take Flipp ingestion down with it.
+
 ## MCP Server
 
 `mcp-server/` (package `grocery-mcp`) exposes the app to Claude and other MCP clients as 22 tools, so you can manage the whole thing conversationally: "add milk at $3.49 to Fry's", "compare my weekly list", "what's on sale at Safeway".
@@ -397,6 +446,9 @@ Endpoints:
 - `POST/PATCH/DELETE /api/lists/:id/items`
 - `GET/POST/PATCH/DELETE /api/prices`
 - `GET/POST/PATCH/DELETE /api/coupons`
+- `POST /api/coupons/ingest/run`
+- `POST /api/prices/refresh-stale`
+- `GET /api/prices/refresh-runs/latest`
 - `GET/PATCH /api/settings`
 - `POST /api/settings/gas-price`
 - `GET /api/distances`

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getDefaultUserId, prisma } from "../lib/prisma.js";
-import { runFlippCouponIngest } from "../services/coupon-ingest.js";
+import { runFlippCouponIngest, runSafewayCouponIngest } from "../services/coupon-ingest.js";
 
 const couponSchema = z.object({
   storeId: z.string().optional().nullable(),
@@ -38,6 +38,7 @@ export async function couponRoutes(app: FastifyInstance) {
 
   app.post("/coupons/ingest/run", async (_request, reply) => {
     void runFlippCouponIngest().catch(() => {});
+    void runSafewayCouponIngest().catch(() => {});
     reply.code(202);
     return { started: true };
   });

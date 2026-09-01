@@ -201,3 +201,32 @@ describe("runFlippCouponIngest", () => {
     expect(row!.scope).toBe("item");
   });
 });
+
+import { runSafewayCouponIngest } from "../services/coupon-ingest.js";
+
+describe("runSafewayCouponIngest", () => {
+  beforeEach(() => {
+    couponStore.length = 0;
+    vi.clearAllMocks();
+  });
+
+  it("stores J4U offers as digital coupons tied to the Safeway store", async () => {
+    (prisma.store.findFirst as any).mockResolvedValue({ id: "st-safeway", name: "Safeway" });
+    const summary = await runSafewayCouponIngest({
+      fetchCoupons: async () => [
+        { id: "OFFER-123", title: "Lucerne Cheese", description: "Save $1.00 on Lucerne Cheese", savingsText: "$1.00", expiresAt: "2099-09-15", brand: "Lucerne", category: "Dairy" }
+      ]
+    });
+    expect(summary.created).toBe(1);
+    const coupon = couponStore.find((c) => c.source === "safeway-j4u" && c.externalId === "OFFER-123");
+    expect(coupon!.couponType).toBe("digital_coupon");
+    expect(coupon!.storeId).toBe("st-safeway");
+    expect(Number(coupon!.amountOff)).toBe(1.0);
+  });
+
+  it("skips cleanly when the scraper is unreachable", async () => {
+    const summary = await runSafewayCouponIngest({ fetchCoupons: async () => { throw new Error("down"); } });
+    expect(summary).toMatchObject({ source: "safeway-j4u", created: 0, updated: 0 });
+    expect(couponStore).toHaveLength(0);
+  });
+});

@@ -2,6 +2,7 @@ import { getDefaultUserId, prisma } from "../lib/prisma.js";
 import type { NormalizedDeal } from "./deals/types.js";
 import { matchDealsToGroceryList } from "./deals/match.js";
 import { flippDealsProvider } from "./deals/flipp.js";
+import { fetchSafewayCoupons, type SafewayCoupon } from "./providers/safeway.js";
 
 // Automatic coupons. Provenance is the whole design: every row written here
 // carries source + externalId, upserts by them, and never touches "manual"
@@ -149,6 +150,58 @@ export async function runFlippCouponIngest(
       });
       return store?.id ?? null;
     },
+    itemIdFor: (deal) => (deal as { matchedItemIds?: string[] }).matchedItemIds?.[0] ?? null
+  });
+}
+
+function j4uToDeal(coupon: SafewayCoupon): NormalizedDeal {
+  const amount = coupon.savingsText?.match(/\$([0-9]+(?:\.[0-9]{1,2})?)/);
+  return {
+    source: "safeway-j4u",
+    storeName: "Safeway",
+    productName: coupon.title,
+    brand: coupon.brand ?? undefined,
+    salePrice: null,
+    regularPrice: null,
+    discountAmount: amount ? Number(amount[1]) : null,
+    dealText: coupon.savingsText ?? undefined,
+    couponRequired: true,
+    digitalCoupon: true,
+    loyaltyRequired: true,
+    description: coupon.description ?? undefined,
+    validTo: coupon.expiresAt,
+    category: coupon.category ?? undefined,
+    confidence: 0.9,
+    raw: { id: coupon.id }
+  };
+}
+
+export async function runSafewayCouponIngest(
+  deps: { fetchCoupons?: () => Promise<SafewayCoupon[]> } = {}
+): Promise<IngestSummary> {
+  const userId = await getDefaultUserId();
+  const fetchCoupons = deps.fetchCoupons ?? fetchSafewayCoupons;
+
+  let coupons: SafewayCoupon[];
+  try {
+    coupons = await fetchCoupons();
+  } catch {
+    // Isolation is the point: a signed-out session or a changed page must
+    // never take the nightly run or other coupon sources down with it.
+    return { source: "safeway-j4u", created: 0, updated: 0, deactivated: 0, skipped: 0 };
+  }
+
+  const safewayStore = await prisma.store.findFirst({
+    where: { userId, name: { contains: "safeway", mode: "insensitive" } }
+  });
+  const items = await prisma.groceryItem.findMany({ where: { userId }, select: { id: true, name: true } });
+  const deals = coupons.map(j4uToDeal);
+  const matched = matchDealsToGroceryList({ deals, groceryItems: items });
+
+  return ingestDealsAsCoupons({
+    source: "safeway-j4u",
+    deals: matched,
+    storeIdFor: () => safewayStore?.id ?? null,
     itemIdFor: (deal) => (deal as { matchedItemIds?: string[] }).matchedItemIds?.[0] ?? null
   });
 }

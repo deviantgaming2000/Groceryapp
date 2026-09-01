@@ -1,6 +1,6 @@
 import { getDefaultUserId, prisma } from "../lib/prisma.js";
 import { startRefreshRun, currentRun } from "./refresh.js";
-import { runFlippCouponIngest } from "./coupon-ingest.js";
+import { runFlippCouponIngest, runSafewayCouponIngest } from "./coupon-ingest.js";
 
 // Nightly auto-update. In-process on purpose: the backend is a long-lived
 // server and an OS cron would need its own auth and deployment story. The
@@ -26,6 +26,7 @@ export async function runNightly(): Promise<void> {
   await runFlippCouponIngest().catch(() => {
     // Coupons are best-effort; a Flipp outage must not fail the nightly run.
   });
+  await runSafewayCouponIngest().catch(() => {});
 }
 
 export function startNightlyScheduler(run: () => Promise<unknown> = runNightly): { stop(): void } {

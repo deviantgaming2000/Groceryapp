@@ -140,6 +140,21 @@ function remember(product: NormalizedProduct) {
   }
 }
 
+export interface SafewayCoupon {
+  id: string;
+  title: string;
+  description: string | null;
+  savingsText: string | null;
+  expiresAt: string | null;
+  brand: string | null;
+  category: string | null;
+}
+
+export async function fetchSafewayCoupons(): Promise<SafewayCoupon[]> {
+  const data = await scraperFetch<{ coupons?: SafewayCoupon[] }>("/coupons");
+  return data.coupons ?? [];
+}
+
 export const safewayProvider: GroceryProvider = {
   id: SOURCE,
   label: "Safeway (self-hosted)",
