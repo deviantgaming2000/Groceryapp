@@ -14,3 +14,4 @@ db-backups/
 # Local-only, not part of the app
 .lavish/
 .vscode/
+.worktrees/
