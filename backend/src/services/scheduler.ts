@@ -19,7 +19,8 @@ export async function runNightly(): Promise<void> {
   if (settings && settings.autoRefreshEnabled === false) return;
   startRefreshRun({ trigger: "nightly" });
   // Wait for the price run to finish before coupon ingestion (Task 9 appends it
-  // here) so the scrapers are never hit by two jobs at once.
+  // here) so the scrapers are never hit by two jobs at once. 5s is coarse on
+  // purpose - this only gates a once-a-night job, not a latency-sensitive path.
   while (currentRun()) await new Promise((r) => setTimeout(r, 5000));
 }
 
@@ -31,6 +32,10 @@ export function startNightlyScheduler(run: () => Promise<unknown> = runNightly):
     if (stopped) return;
     const userId = await getDefaultUserId().catch(() => null);
     const settings = userId ? await prisma.userSettings.findUnique({ where: { userId } }).catch(() => null) : null;
+    // Re-check: stop() may have run while the awaits above were pending, when
+    // `timer` was still null and stop()'s clearTimeout(timer) was a no-op.
+    // Without this, we would arm a timer stop() can never cancel.
+    if (stopped) return;
     const hour = settings?.autoRefreshHour ?? 3;
     timer = setTimeout(async () => {
       try {
