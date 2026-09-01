@@ -22,6 +22,7 @@ Coupon ingestion upserts Flipp deals and Safeway J4U offers into the existing Co
 - Scraper pacing rules are load-bearing: hard call ceiling 80/run, 300ms between upstream calls, degrade a provider after 5 consecutive empty results, per-run (provider|store|term) search cache.
 - The safeway scraper service default port is 8092. It is deliberately slow (~20-30s per search).
 - All new automatic writes must be attributable (source fields) and idempotent (upsert by source + external identity).
+- Tests NEVER touch a live database. The repo convention is `vi.mock("../lib/prisma.js", ...)` (see `backend/src/tests/compare.route.test.ts`); the dev database holds real user data, and a `deleteMany` in a test would destroy it. DB-dependent behavior is tested against mocked or stateful in-memory prisma fakes.
 
 ---
 
@@ -591,6 +592,7 @@ export interface RefreshRunSummary {
 export interface RefreshDeps {
   getProviderById?: typeof getProvider; // injectable for tests
   sleep?: (ms: number) => Promise<void>;
+  upsert?: typeof upsertPrice;          // injectable for tests (default: the real upsertPrice)
 }
 export function currentRun(): RefreshRunSummary | null;   // the running one, else null
 export function latestRun(): RefreshRunSummary | null;    // running or last finished
@@ -615,14 +617,22 @@ git commit -m "refactor(providers): extract product import helpers from the rout
 
 - [ ] **Step 2: Write the failing refresh-engine tests**
 
-The engine takes its providers through an injectable lookup, so tests use fakes and a real test database row set.
-Follow the existing route tests' pattern for DB setup (see `backend/src/tests/compare.route.test.ts` for how the suite gets a user, store, item, and price rows; reuse its helpers or copy its setup style).
+Tests follow the repo convention (`compare.route.test.ts`): `vi.mock("../lib/prisma.js")` - never a live database.
+The engine's provider lookup and price-writing are injectable, so the mocked prisma only has to answer `priceEntry.findMany` (the linked entries) and record `priceEntry.update` calls (the status marks).
 
 ```ts
 // backend/src/tests/refresh.test.ts
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../lib/prisma.js", () => ({
+  getDefaultUserId: vi.fn(async () => "user-1"),
+  prisma: {
+    priceEntry: { findMany: vi.fn(async () => []), update: vi.fn(async () => ({})) }
+  }
+}));
+
+import { prisma } from "../lib/prisma.js";
 import { startRefreshRun, latestRun, currentRun } from "../services/refresh.js";
-import { prisma, getDefaultUserId } from "../lib/prisma.js";
 import type { GroceryProvider, NormalizedProduct } from "../services/providers/index.js";
 
 function fakeProduct(over: Partial<NormalizedProduct> = {}): NormalizedProduct {
@@ -650,97 +660,94 @@ function fakeProvider(results: NormalizedProduct[]): GroceryProvider {
     hasStores: true,
     isConfigured: async () => true,
     searchLocations: async () => [],
-    getLocation: async (id) => ({ source: "fakeprov", externalId: id, name: "Fake Store" }),
+    getLocation: async (id: string) => ({ source: "fakeprov", externalId: id, name: "Fake Store" }),
     searchProducts: async () => results,
     getProduct: async () => null
   };
 }
 
-async function seedLinkedPrice(externalProductId: string, price = 2.0) {
-  const userId = await getDefaultUserId();
-  const store = await prisma.store.create({
-    data: {
-      userId, name: "Fake Store", storeType: "grocery", address: "1 Test St",
-      city: "Casa Grande", state: "AZ", zip: "85122",
-      provider: "fakeprov", externalId: "st-1"
-    }
-  });
-  const item = await prisma.groceryItem.create({
-    data: { userId, name: "Whole Milk", category: "Dairy", quantityNeeded: 1, unitType: "each" }
-  });
-  const entry = await prisma.priceEntry.create({
-    data: {
-      userId, groceryItemId: item.id, storeId: store.id,
-      price, packageQuantity: 1, packageUnit: "each",
-      source: "fakeprov", externalProductId,
-      recordedAt: new Date(Date.now() - 48 * 3600 * 1000)
-    }
-  });
-  return { userId, store, item, entry };
+/** One linked price entry as the engine's findMany returns it (include: store, groceryItem). */
+function linkedEntry(over: Record<string, unknown> = {}) {
+  return {
+    id: "pe-1",
+    userId: "user-1",
+    groceryItemId: "gi-1",
+    storeId: "st-local",
+    price: 2.0,
+    source: "fakeprov",
+    externalProductId: "ext-1",
+    recordedAt: new Date(Date.now() - 48 * 3600 * 1000),
+    store: { id: "st-local", externalId: "st-1" },
+    groceryItem: { id: "gi-1", name: "Whole Milk" },
+    ...over
+  };
 }
 
-async function runToCompletion(deps: Parameters<typeof startRefreshRun>[1]) {
-  startRefreshRun({ trigger: "manual" }, deps);
+async function runToCompletion(deps: Parameters<typeof startRefreshRun>[1], staleHours?: number) {
+  startRefreshRun({ trigger: "manual", staleHours }, deps);
   for (let i = 0; i < 200 && currentRun(); i++) await new Promise((r) => setTimeout(r, 10));
   return latestRun()!;
 }
 
 describe("refresh engine", () => {
-  beforeEach(async () => {
-    await prisma.priceEntry.deleteMany({});
-    await prisma.groceryItem.deleteMany({});
-    await prisma.store.deleteMany({});
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (prisma.priceEntry.findMany as any).mockResolvedValue([]);
   });
 
-  it("updates a price on an exact external-id match", async () => {
-    const { entry } = await seedLinkedPrice("ext-1");
+  it("upserts a price on an exact external-id match and marks the row ok", async () => {
+    (prisma.priceEntry.findMany as any).mockResolvedValue([linkedEntry()]);
     const provider = fakeProvider([fakeProduct({ price: 3.49 })]);
-    const run = await runToCompletion({ getProviderById: () => provider, sleep: async () => {} });
+    const upsert = vi.fn(async () => ({}));
+    const run = await runToCompletion({ getProviderById: () => provider, sleep: async () => {}, upsert });
 
     expect(run.status).toBe("done");
     expect(run.providers[0].refreshed).toBe(1);
-    const updated = await prisma.priceEntry.findUnique({ where: { id: entry.id } });
-    expect(Number(updated!.price)).toBe(3.49);
-    expect(updated!.lastRefreshStatus).toBe("ok");
+    expect(upsert).toHaveBeenCalledWith("user-1", "gi-1", "st-local", expect.objectContaining({ externalProductId: "ext-1", price: 3.49 }), "pe-1");
+    expect(prisma.priceEntry.update).toHaveBeenCalledWith({ where: { id: "pe-1" }, data: { lastRefreshStatus: "ok" } });
   });
 
   it("marks the row not_found instead of guessing when the id is absent", async () => {
-    const { entry } = await seedLinkedPrice("ext-GONE");
+    (prisma.priceEntry.findMany as any).mockResolvedValue([linkedEntry({ externalProductId: "ext-GONE" })]);
     // A lookalike with the right name but a different id must NOT be written.
     const provider = fakeProvider([fakeProduct({ externalProductId: "ext-1", price: 9.99 })]);
-    const run = await runToCompletion({ getProviderById: () => provider, sleep: async () => {} });
+    const upsert = vi.fn(async () => ({}));
+    const run = await runToCompletion({ getProviderById: () => provider, sleep: async () => {}, upsert });
 
     expect(run.providers[0].unverified).toBe(1);
-    const kept = await prisma.priceEntry.findUnique({ where: { id: entry.id } });
-    expect(Number(kept!.price)).toBe(2.0);
-    expect(kept!.lastRefreshStatus).toBe("not_found");
+    expect(upsert).not.toHaveBeenCalled();
+    expect(prisma.priceEntry.update).toHaveBeenCalledWith({ where: { id: "pe-1" }, data: { lastRefreshStatus: "not_found" } });
   });
 
   it("degrades a provider after repeated failures and joins an in-flight run", async () => {
-    await seedLinkedPrice("a");
+    (prisma.priceEntry.findMany as any).mockResolvedValue(
+      Array.from({ length: 7 }, (_, i) => linkedEntry({ id: `pe-${i}`, groceryItem: { id: "gi-1", name: `Item ${i}` } }))
+    );
     const failing: GroceryProvider = {
       ...fakeProvider([]),
       searchProducts: async () => { throw new Error("boom"); }
     };
-    const first = startRefreshRun({ trigger: "manual" }, { getProviderById: () => failing, sleep: async () => {} });
-    const second = startRefreshRun({ trigger: "manual" }, { getProviderById: () => failing, sleep: async () => {} });
+    const upsert = vi.fn(async () => ({}));
+    const first = startRefreshRun({ trigger: "manual" }, { getProviderById: () => failing, sleep: async () => {}, upsert });
+    const second = startRefreshRun({ trigger: "manual" }, { getProviderById: () => failing, sleep: async () => {}, upsert });
     expect(second.id).toBe(first.id); // joined, not doubled
     for (let i = 0; i < 200 && currentRun(); i++) await new Promise((r) => setTimeout(r, 10));
     const run = latestRun()!;
     expect(run.status).toBe("done");
-    expect(run.providers[0].failed + run.providers[0].skipped).toBeGreaterThan(0);
+    expect(run.providers[0].failed).toBe(5); // FAIL_STREAK_LIMIT failures before degradation
+    expect(run.providers[0].skipped).toBe(2); // the rest skipped as degraded
+    expect(upsert).not.toHaveBeenCalled();
   });
 
-  it("honors staleHours: fresh rows are skipped", async () => {
-    const { entry } = await seedLinkedPrice("ext-1");
-    await prisma.priceEntry.update({ where: { id: entry.id }, data: { recordedAt: new Date() } });
+  it("passes the staleHours cutoff into the findMany filter", async () => {
     const provider = fakeProvider([fakeProduct()]);
-    const run = await runToCompletion({ getProviderById: () => provider, sleep: async () => {} });
-    // runToCompletion passes no staleHours; add one for this case:
-    startRefreshRun({ trigger: "stale-view", staleHours: 24 }, { getProviderById: () => provider, sleep: async () => {} });
-    for (let i = 0; i < 200 && currentRun(); i++) await new Promise((r) => setTimeout(r, 10));
-    expect(latestRun()!.totalEntries).toBe(0);
-    void run;
+    await runToCompletion({ getProviderById: () => provider, sleep: async () => {} }, 24);
+    const args = (prisma.priceEntry.findMany as any).mock.calls[0][0];
+    expect(args.where.recordedAt.lt).toBeInstanceOf(Date);
+    // No staleHours: no recordedAt filter at all.
+    await runToCompletion({ getProviderById: () => provider, sleep: async () => {} });
+    const args2 = (prisma.priceEntry.findMany as any).mock.calls[1][0];
+    expect(args2.where.recordedAt).toBeUndefined();
   });
 });
 ```
@@ -787,6 +794,7 @@ export interface RefreshRunSummary {
 export interface RefreshDeps {
   getProviderById?: typeof getProvider;
   sleep?: (ms: number) => Promise<void>;
+  upsert?: typeof upsertPrice;
 }
 
 let running: RefreshRunSummary | null = null;
@@ -831,6 +839,7 @@ async function execute(
 ): Promise<void> {
   const lookup = deps.getProviderById ?? getProvider;
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const upsert = deps.upsert ?? upsertPrice;
   try {
     const userId = await getDefaultUserId();
     const cutoff = opts.staleHours != null ? new Date(Date.now() - opts.staleHours * 3600 * 1000) : null;
@@ -906,7 +915,7 @@ async function execute(
           continue;
         }
 
-        await upsertPrice(userId, entry.groceryItemId, entry.storeId, match, entry.id);
+        await upsert(userId, entry.groceryItemId, entry.storeId, match, entry.id);
         await mark(entry.id, "ok");
         stats.refreshed += 1;
       }
@@ -955,7 +964,18 @@ git commit -m "feat(refresh): shared auto-refresh engine with exact-id matching 
 
 ```ts
 // backend/src/tests/refresh.route.test.ts
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Repo convention: no live database in tests. The engine behind the route
+// sees no linked entries, so the run completes immediately.
+vi.mock("../lib/prisma.js", () => ({
+  getDefaultUserId: vi.fn(async () => "user-1"),
+  prisma: {
+    userSettings: { findUnique: vi.fn(async () => null) },
+    priceEntry: { findMany: vi.fn(async () => []), update: vi.fn(async () => ({})) }
+  }
+}));
+
 import { buildServer } from "../server.js";
 
 describe("refresh routes", () => {
@@ -1269,12 +1289,52 @@ export async function runFlippCouponIngest(deps?: { searchDeals?: (q: string, zi
 
 - [ ] **Step 1: Write the failing tests**
 
+Repo convention: no live database. A small stateful in-memory coupon store stands in for prisma, so the upsert-by-(source, externalId) semantics are tested for real.
+
 ```ts
 // backend/src/tests/coupon-ingest.test.ts
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../lib/prisma.js", () => {
+  const coupons: any[] = [];
+  let seq = 0;
+  return {
+    getDefaultUserId: vi.fn(async () => "user-1"),
+    prisma: {
+      __coupons: coupons,
+      coupon: {
+        findFirst: vi.fn(async ({ where }: any) =>
+          coupons.find((c) => c.userId === where.userId && c.source === where.source && c.externalId === where.externalId) ?? null),
+        create: vi.fn(async ({ data }: any) => {
+          const row = { id: `c-${++seq}`, isActive: true, ...data };
+          coupons.push(row);
+          return row;
+        }),
+        update: vi.fn(async ({ where, data }: any) => {
+          const row = coupons.find((c) => c.id === where.id);
+          Object.assign(row, data);
+          return row;
+        }),
+        updateMany: vi.fn(async ({ where, data }: any) => {
+          const hits = coupons.filter(
+            (c) => c.userId === where.userId && c.source === where.source &&
+              c.isActive === where.isActive && c.expiresAt && c.expiresAt < where.expiresAt.lt
+          );
+          hits.forEach((c) => Object.assign(c, data));
+          return { count: hits.length };
+        })
+      },
+      store: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
+      groceryItem: { findMany: vi.fn(async () => []) }
+    }
+  };
+});
+
+import { prisma } from "../lib/prisma.js";
 import { dealCouponFields, dealExternalId, ingestDealsAsCoupons } from "../services/coupon-ingest.js";
-import { getDefaultUserId, prisma } from "../lib/prisma.js";
 import type { NormalizedDeal } from "../services/deals/types.js";
+
+const couponStore = (prisma as any).__coupons as any[];
 
 function deal(over: Partial<NormalizedDeal> = {}): NormalizedDeal {
   return {
@@ -1317,43 +1377,56 @@ describe("dealCouponFields", () => {
 });
 
 describe("ingestDealsAsCoupons", () => {
-  beforeEach(async () => {
-    await prisma.coupon.deleteMany({ where: { source: { not: "manual" } } });
+  beforeEach(() => {
+    couponStore.length = 0;
+    vi.clearAllMocks();
   });
 
   it("creates, then updates on re-run, never duplicates, and skips manual rows", async () => {
-    const userId = await getDefaultUserId();
-    const store = await prisma.store.create({ data: { userId, name: "Safeway", storeType: "grocery", address: "1 Test St", city: "Casa Grande", state: "AZ", zip: "85122" } });
-    const manual = await prisma.coupon.create({
-      data: { userId, name: "My own coupon", couponType: "dollar_off", scope: "store", amountOff: 1, storeId: store.id }
+    couponStore.push({
+      id: "manual-1", userId: "user-1", source: "manual", externalId: null,
+      name: "My own coupon", couponType: "dollar_off", scope: "store", amountOff: 1, isActive: true, expiresAt: null
     });
 
-    const opts = { source: "flipp", deals: [deal()], storeIdFor: () => store.id, itemIdFor: () => null };
+    const opts = { source: "flipp", deals: [deal()], storeIdFor: () => "st-1", itemIdFor: () => null };
     const first = await ingestDealsAsCoupons(opts);
     expect(first.created).toBe(1);
 
     const second = await ingestDealsAsCoupons(opts);
     expect(second.created).toBe(0);
     expect(second.updated).toBe(1);
-    expect(await prisma.coupon.count({ where: { source: "flipp" } })).toBe(1);
+    expect(couponStore.filter((c) => c.source === "flipp")).toHaveLength(1);
 
-    const untouched = await prisma.coupon.findUnique({ where: { id: manual.id } });
+    const untouched = couponStore.find((c) => c.id === "manual-1");
     expect(untouched!.name).toBe("My own coupon");
+    expect(untouched!.isActive).toBe(true);
   });
 
-  it("deactivates expired auto coupons and never manual ones", async () => {
-    const userId = await getDefaultUserId();
-    const store = await prisma.store.create({ data: { userId, name: "Safeway", storeType: "grocery", address: "1 Test St", city: "Casa Grande", state: "AZ", zip: "85122" } });
+  it("creates an already-expired deal as inactive, never active-then-stale", async () => {
     await ingestDealsAsCoupons({
       source: "flipp",
       deals: [deal({ validTo: "2020-01-01", raw: { id: "old-1" } })],
-      storeIdFor: () => store.id,
+      storeIdFor: () => "st-1",
       itemIdFor: () => null
     });
+    const row = couponStore.find((c) => c.externalId === "old-1");
+    expect(row!.isActive).toBe(false);
+  });
+
+  it("deactivates its own leftover coupons whose window passed, and never manual ones", async () => {
+    // A coupon ingested while valid, whose flyer window has since ended:
+    couponStore.push({
+      id: "c-old", userId: "user-1", source: "flipp", externalId: "left-1",
+      name: "Old deal", couponType: "dollar_off", scope: "store", isActive: true, expiresAt: new Date("2020-01-08")
+    });
+    couponStore.push({
+      id: "manual-2", userId: "user-1", source: "manual", externalId: null,
+      name: "Mine", couponType: "dollar_off", scope: "store", isActive: true, expiresAt: new Date("2020-01-08")
+    });
     const summary = await ingestDealsAsCoupons({ source: "flipp", deals: [], storeIdFor: () => null, itemIdFor: () => null });
-    expect(summary.deactivated).toBeGreaterThanOrEqual(1);
-    const rows = await prisma.coupon.findMany({ where: { source: "flipp", externalId: "old-1" } });
-    expect(rows[0].isActive).toBe(false);
+    expect(summary.deactivated).toBe(1);
+    expect(couponStore.find((c) => c.id === "c-old")!.isActive).toBe(false);
+    expect(couponStore.find((c) => c.id === "manual-2")!.isActive).toBe(true);
   });
 });
 ```
@@ -1819,24 +1892,29 @@ Append to `backend/src/tests/coupon-ingest.test.ts`:
 import { runSafewayCouponIngest } from "../services/coupon-ingest.js";
 
 describe("runSafewayCouponIngest", () => {
+  beforeEach(() => {
+    couponStore.length = 0;
+    vi.clearAllMocks();
+  });
+
   it("stores J4U offers as digital coupons tied to the Safeway store", async () => {
-    const userId = await getDefaultUserId();
-    const store = await prisma.store.create({ data: { userId, name: "Safeway", storeType: "grocery", address: "1 Test St", city: "Casa Grande", state: "AZ", zip: "85122" } });
+    (prisma.store.findFirst as any).mockResolvedValue({ id: "st-safeway", name: "Safeway" });
     const summary = await runSafewayCouponIngest({
       fetchCoupons: async () => [
         { id: "OFFER-123", title: "Lucerne Cheese", description: "Save $1.00 on Lucerne Cheese", savingsText: "$1.00", expiresAt: "2099-09-15", brand: "Lucerne", category: "Dairy" }
       ]
     });
     expect(summary.created).toBe(1);
-    const coupon = await prisma.coupon.findFirst({ where: { source: "safeway-j4u", externalId: "OFFER-123" } });
+    const coupon = couponStore.find((c) => c.source === "safeway-j4u" && c.externalId === "OFFER-123");
     expect(coupon!.couponType).toBe("digital_coupon");
-    expect(coupon!.storeId).toBe(store.id);
+    expect(coupon!.storeId).toBe("st-safeway");
     expect(Number(coupon!.amountOff)).toBe(1.0);
   });
 
   it("skips cleanly when the scraper is unreachable", async () => {
     const summary = await runSafewayCouponIngest({ fetchCoupons: async () => { throw new Error("down"); } });
     expect(summary).toMatchObject({ source: "safeway-j4u", created: 0, updated: 0 });
+    expect(couponStore).toHaveLength(0);
   });
 });
 ```
