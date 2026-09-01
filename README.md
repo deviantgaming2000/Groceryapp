@@ -4,7 +4,7 @@ A manual-first grocery price comparison app.
 It never invents prices and never pretends to know store pricing: every price is either entered by you or pulled from a named, inspectable source that is recorded on the price entry.
 
 Manual entry is always the baseline and always works.
-On top of that, optional integrations can fetch real prices: the Kroger/Fry's API, Walmart via SerpApi, a best-effort Walmart store scraper, and weekly flyer deals via Flipp.
+On top of that, optional integrations can fetch real prices: the Kroger/Fry's API, Walmart via SerpApi, a best-effort self-hosted Walmart store scraper, a self-hosted Safeway scraper, and weekly flyer deals via Flipp.
 Each is opt-in, each requires a key or explicit action, and none of them run unless you configure them.
 
 The app answers:
@@ -278,6 +278,28 @@ The selected store is saved and passed as `store_id` on every search/import/refr
 Walmart uses the same provider/normalization layer and the same `/api/walmart/*` routes
 (`status`, `locations`, `store`, `products/search`, `products/:id`, `import`, `prices/:id/refresh`)
 as Kroger.
+
+## Safeway (self-hosted)
+
+A free, self-hosted Safeway price scraper (`backend/src/services/providers/safeway.ts`), living in the
+same `walmart-scraper` repo as the Walmart scraper above. Safeway's storefront requires a signed-in
+account to show correct pricing, so this provider attaches to your **real, signed-in Chrome** over CDP
+instead of running headless. There is no store picker - the store you get prices for is whichever one
+your Safeway account already has selected, so switching stores means switching stores in your Safeway
+account itself.
+
+1. In the `walmart-scraper` repo: `npm run safeway:chrome` launches a Chrome instance for you to sign
+   into Safeway with, then `npm run safeway` starts the scraper API (default `http://localhost:8092`).
+2. Add the scraper URL under **Settings → API Keys → Safeway (self-hosted scraper)** (or set
+   `SAFEWAY_SCRAPER_URL` in `.env`).
+3. In **Find Products**, switch to the **Safeway** tab and search.
+
+Like the Walmart scraper, this is best-effort and rate-limited: results are cached for roughly a day,
+and a blocked/challenged response from the scraper is treated as a temporary rate limit rather than a
+hard failure.
+
+Safeway uses the same provider/normalization layer and the same `/api/safeway/*` routes as Kroger and
+Walmart.
 
 ## Managing API Keys
 

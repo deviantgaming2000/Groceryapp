@@ -67,6 +67,15 @@ export const CREDENTIAL_SPECS: CredentialSpec[] = [
       { key: "apiStyle", label: "API style (auto / ollama / openai)", secret: false, placeholder: "auto" }
     ],
     envMap: { baseUrl: "OLLAMA_URL", model: "OLLAMA_VISION_MODEL", apiStyle: "VISION_API_STYLE" }
+  },
+  {
+    provider: "safeway",
+    label: "Safeway (self-hosted scraper)",
+    description:
+      "Self-hosted Safeway price scraper (walmart-scraper repo, npm run safeway). It attaches to your real, signed-in Chrome, so prices come from the store your Safeway account has selected.",
+    docsUrl: "https://github.com/deviantgaming2000/walmart-scraper",
+    fields: [{ key: "baseUrl", label: "Scraper URL", secret: false, placeholder: "http://localhost:8092" }],
+    envMap: { baseUrl: "SAFEWAY_SCRAPER_URL" }
   }
 ];
 

@@ -65,6 +65,7 @@ const norm = (x?: string | null) => (x ?? "").toLowerCase().replace(/[^a-z0-9]/g
 function providerChainKeys(providerId: string): string[] {
   if (providerId === "kroger") return ["frys", "fry", "kroger"];
   if (providerId.startsWith("walmart")) return ["walmart"];
+  if (providerId === "safeway") return ["safeway", "albertsons"];
   return [];
 }
 

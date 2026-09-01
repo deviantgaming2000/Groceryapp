@@ -78,3 +78,120 @@ export function normalizeSafewayItem(item: SafewayScrapedItem, storeId?: string 
     raw: item
   };
 }
+
+async function baseUrl(): Promise<string> {
+  const cfg = await resolveConfig(SOURCE);
+  const url = cfg.baseUrl?.trim() || process.env.SAFEWAY_SCRAPER_URL?.trim() || DEFAULT_BASE;
+  return url.replace(/\/$/, "");
+}
+
+function apiKey(): string {
+  return process.env.SAFEWAY_SCRAPER_API_KEY?.trim() || "";
+}
+
+async function scraperFetch<T>(pathname: string): Promise<T> {
+  const base = await baseUrl();
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const key = apiKey();
+  if (key) headers["x-api-key"] = key;
+
+  const controller = new AbortController();
+  // A Safeway search drives a real browser and takes 20-30s; allow for a queue.
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  let response: Response;
+  try {
+    response = await fetch(base + pathname, { headers, signal: controller.signal });
+  } catch {
+    throw new ProviderError(
+      `Could not reach the Safeway scraper at ${base}. Is the service running? (npm run safeway in walmart-scraper, with Chrome started via npm run safeway:chrome)`,
+      "network",
+      502
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (response.status === 401) throw new ProviderError("The scraper rejected the API key.", "auth_failed", 502);
+  if (!response.ok) {
+    let message = `Safeway scraper error (${response.status}).`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body?.error) message = String(body.error);
+    } catch {
+      /* non-JSON error body */
+    }
+    if (/imperva|budget|block|challenge|rate/i.test(message)) throw new ProviderError(message, "rate_limited", 429);
+    throw new ProviderError(message, "upstream", 502);
+  }
+  return (await response.json()) as T;
+}
+
+const SEARCH_TTL_MS = Number(process.env.SAFEWAY_CACHE_TTL_MS) || 24 * 60 * 60 * 1000;
+const CACHE_FETCH = 40;
+const searchCache = new Map<string, { at: number; products: NormalizedProduct[] }>();
+
+const recent = new Map<string, NormalizedProduct>();
+const RECENT_MAX = 500;
+function remember(product: NormalizedProduct) {
+  recent.set(product.externalProductId, product);
+  if (recent.size > RECENT_MAX) {
+    const oldest = recent.keys().next().value;
+    if (oldest !== undefined) recent.delete(oldest);
+  }
+}
+
+export const safewayProvider: GroceryProvider = {
+  id: SOURCE,
+  label: "Safeway (self-hosted)",
+  hasStores: false,
+
+  async isConfigured() {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      const response = await fetch((await baseUrl()) + "/health", { signal: controller.signal });
+      clearTimeout(timeout);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  defaultLocationId() {
+    return SESSION_STORE_ID;
+  },
+
+  async searchLocations(_params: LocationSearchParams) {
+    return [SESSION_STORE];
+  },
+
+  async getLocation(externalId: string) {
+    if (!externalId || externalId === SESSION_STORE_ID) return SESSION_STORE;
+    // A concrete store id the scraper reported earlier stays attributable.
+    return { source: SOURCE, externalId, name: `Safeway #${externalId}`, chain: "Safeway" };
+  },
+
+  async searchProducts(params: ProductSearchParams) {
+    if (!params.term) throw new ProviderError("Enter a search term.", "bad_request", 400);
+    const limit = params.limit ?? 15;
+    // The session decides the store, so the cache key is the term alone.
+    const cacheKey = params.term.trim().toLowerCase();
+
+    const hit = searchCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < SEARCH_TTL_MS) {
+      hit.products.forEach(remember);
+      return hit.products.slice(0, limit);
+    }
+
+    const qs = new URLSearchParams({ query: params.term, limit: String(CACHE_FETCH) });
+    const data = await scraperFetch<SafewaySearchResponse>(`/search?${qs.toString()}`);
+    const products = (data.results ?? []).map((item) => normalizeSafewayItem(item, data.storeId));
+    searchCache.set(cacheKey, { at: Date.now(), products });
+    products.forEach(remember);
+    return products.slice(0, limit);
+  },
+
+  async getProduct(externalProductId: string, _locationId?: string) {
+    return recent.get(externalProductId) ?? null;
+  }
+};
